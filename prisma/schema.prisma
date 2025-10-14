@@ -1,0 +1,69 @@
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  password  String
+  name      String?
+  role      UserRole   @default(USER)
+  status    UserStatus @default(ACTIVE) // Add this line
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  company   String
+  plan      String
+  sessions  Session[]
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("sessions")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  ipAddress String?
+  userAgent String?
+  timestamp DateTime @default(now())
+  details   Json?
+  User      User     @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model Token {
+  tokenId   String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  hash      String
+  valid     Boolean  @default(true)
+}
