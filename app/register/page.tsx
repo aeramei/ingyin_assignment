@@ -25,6 +25,10 @@ export default function Register() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
+  const [registrationStep, setRegistrationStep] = useState<"form" | "otp">(
+    "form"
+  );
+  const [otpCode, setOtpCode] = useState("");
 
   const handleChange = (
     e: ChangeEvent<HTMLInputElement | HTMLSelectElement>
@@ -37,13 +41,11 @@ export default function Register() {
     setSuccess("");
   };
 
-  //
-
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+  // ✅ STEP 1: Send OTP
+  const handleSendOTP = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     setError("");
-    setSuccess("");
 
     // Client-side validation
     if (formData.password !== formData.confirmPassword) {
@@ -65,6 +67,39 @@ export default function Register() {
     }
 
     try {
+      const response = await fetch("/api/auth/register/send-otp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: formData.email,
+          name: formData.fullName,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to send verification code");
+      }
+
+      setRegistrationStep("otp");
+      setSuccess("Verification code sent to your email!");
+    } catch (error: any) {
+      setError(error.message || "Failed to send verification code");
+      console.error("OTP send error:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ✅ STEP 2: Verify OTP and Register
+  const handleVerifyOTPAndRegister = async () => {
+    setIsLoading(true);
+    setError("");
+
+    try {
       const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: {
@@ -76,9 +111,9 @@ export default function Register() {
           name: formData.fullName,
           company: formData.company,
           plan: formData.plan,
+          otp: otpCode,
         }),
       });
-
       const data = await response.json();
 
       if (!response.ok) {
@@ -104,6 +139,37 @@ export default function Register() {
     } catch (error: any) {
       setError(error.message || "Registration failed. Please try again.");
       console.error("Registration error:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendOTP = async () => {
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/auth/register/send-otp", {
+        // ✅ Add /register
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: formData.email,
+          name: formData.fullName,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to resend verification code");
+      }
+
+      setSuccess("Verification code resent to your email!");
+    } catch (error: any) {
+      setError(error.message || "Failed to resend verification code");
     } finally {
       setIsLoading(false);
     }
@@ -157,13 +223,15 @@ export default function Register() {
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-4xl font-black mb-4">
-              Create Your{" "}
+              {registrationStep === "form" ? "Create Your " : "Verify Your "}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
-                Account
+                {registrationStep === "form" ? "Account" : "Email"}
               </span>
             </h1>
             <p className="text-gray-300">
-              Join SyncTech and start integrating your business data today
+              {registrationStep === "form"
+                ? "Join SyncTech and start integrating your business data today"
+                : `We sent a 6-digit code to ${formData.email}`}
             </p>
           </div>
 
@@ -190,187 +258,261 @@ export default function Register() {
               border: "1px solid rgba(103, 232, 249, 0.2)",
             }}
           >
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Full Name */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Full Name
-                </label>
-                <input
-                  type="text"
-                  name="fullName"
-                  value={formData.fullName}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
-                  placeholder="Enter your full name"
-                />
-              </div>
+            {registrationStep === "form" ? (
+              /* STEP 1: Registration Form */
+              <form onSubmit={handleSendOTP} className="space-y-6">
+                {/* Full Name */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    name="fullName"
+                    value={formData.fullName}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
+                    placeholder="Enter your full name"
+                  />
+                </div>
 
-              {/* Email */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Work Email
-                </label>
-                <input
-                  type="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
-                  placeholder="your@company.com"
-                />
-              </div>
+                {/* Email */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Work Email
+                  </label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
+                    placeholder="your@company.com"
+                  />
+                </div>
 
-              {/* Company */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Company
-                </label>
-                <input
-                  type="text"
-                  name="company"
-                  value={formData.company}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
-                  placeholder="Your company name"
-                />
-              </div>
+                {/* Company */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Company
+                  </label>
+                  <input
+                    type="text"
+                    name="company"
+                    value={formData.company}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
+                    placeholder="Your company name"
+                  />
+                </div>
 
-              {/* Password */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
-                  placeholder="Create a strong password"
-                />
-              </div>
+                {/* Password */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    name="password"
+                    value={formData.password}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
+                    placeholder="Create a strong password"
+                  />
+                </div>
 
-              {/* Confirm Password */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Confirm Password
-                </label>
-                <input
-                  type="password"
-                  name="confirmPassword"
-                  value={formData.confirmPassword}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
-                  placeholder="Confirm your password"
-                />
-              </div>
+                {/* Confirm Password */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Confirm Password
+                  </label>
+                  <input
+                    type="password"
+                    name="confirmPassword"
+                    value={formData.confirmPassword}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
+                    placeholder="Confirm your password"
+                  />
+                </div>
 
-              {/* Plan Selection */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Choose Your Plan
-                </label>
-                <select
-                  name="plan"
-                  value={formData.plan}
-                  onChange={handleChange}
-                  className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white focus:outline-none focus:border-cyan-400 transition-all"
-                >
-                  <option value="starter">Starter - Free 14-day trial</option>
-                  <option value="professional">Professional - $49/month</option>
-                  <option value="enterprise">
-                    Enterprise - Custom pricing
-                  </option>
-                </select>
-              </div>
-
-              {/* Terms Agreement */}
-              <div className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  required
-                  className="w-4 h-4 text-cyan-400 bg-black/40 border-cyan-500/30 rounded focus:ring-cyan-400"
-                />
-                <span className="text-sm text-gray-300">
-                  I agree to the{" "}
-                  <a
-                    href="#"
-                    className="text-cyan-400 hover:text-cyan-300 transition-colors"
-                    onClick={(e) => e.preventDefault()}
+                {/* Plan Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Choose Your Plan
+                  </label>
+                  <select
+                    name="plan"
+                    value={formData.plan}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white focus:outline-none focus:border-cyan-400 transition-all"
                   >
-                    Terms of Service
-                  </a>{" "}
-                  and{" "}
-                  <a
-                    href="#"
-                    className="text-cyan-400 hover:text-cyan-300 transition-colors"
-                    onClick={(e) => e.preventDefault()}
-                  >
-                    Privacy Policy
-                  </a>
-                </span>
-              </div>
+                    <option value="starter">Starter - Free 14-day trial</option>
+                    <option value="professional">
+                      Professional - $49/month
+                    </option>
+                    <option value="enterprise">
+                      Enterprise - Custom pricing
+                    </option>
+                  </select>
+                </div>
 
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-4 px-6 rounded-xl font-bold text-lg text-black bg-gradient-to-br from-cyan-400 to-teal-500 hover:from-cyan-300 hover:to-teal-400 shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <span className="flex items-center justify-center">
-                    <svg
-                      className="animate-spin -ml-1 mr-3 h-5 w-5 text-black"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
+                {/* Terms Agreement */}
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    required
+                    className="w-4 h-4 text-cyan-400 bg-black/40 border-cyan-500/30 rounded focus:ring-cyan-400"
+                  />
+                  <span className="text-sm text-gray-300">
+                    I agree to the{" "}
+                    <a
+                      href="#"
+                      className="text-cyan-400 hover:text-cyan-300 transition-colors"
+                      onClick={(e) => e.preventDefault()}
                     >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    Creating Account...
+                      Terms of Service
+                    </a>{" "}
+                    and{" "}
+                    <a
+                      href="#"
+                      className="text-cyan-400 hover:text-cyan-300 transition-colors"
+                      onClick={(e) => e.preventDefault()}
+                    >
+                      Privacy Policy
+                    </a>
                   </span>
-                ) : (
-                  "Create Account"
-                )}
-              </button>
+                </div>
 
-              {/* Login Link */}
-              <div className="text-center">
-                <span className="text-gray-400">Already have an account? </span>
-                <Link
-                  href="/signin"
-                  className="text-cyan-400 hover:text-cyan-300 transition-colors font-medium"
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full py-4 px-6 rounded-xl font-bold text-lg text-black bg-gradient-to-br from-cyan-400 to-teal-500 hover:from-cyan-300 hover:to-teal-400 shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Sign In
-                </Link>
-              </div>
-            </form>
-          </div>
+                  {isLoading ? (
+                    <span className="flex items-center justify-center">
+                      <svg
+                        className="animate-spin -ml-1 mr-3 h-5 w-5 text-black"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        ></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        ></path>
+                      </svg>
+                      Sending Code...
+                    </span>
+                  ) : (
+                    "Send Verification Code"
+                  )}
+                </button>
 
-          {/* Demo Note */}
-          <div className="mt-6 p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-lg">
-            <p className="text-sm text-cyan-300 text-center">
-              <strong>Demo Mode:</strong> This is a UI-only demonstration. Form
-              validation works, but no data is sent to any server.
-            </p>
+                {/* Login Link */}
+                <div className="text-center">
+                  <span className="text-gray-400">
+                    Already have an account?{" "}
+                  </span>
+                  <Link
+                    href="/signin"
+                    className="text-cyan-400 hover:text-cyan-300 transition-colors font-medium"
+                  >
+                    Sign In
+                  </Link>
+                </div>
+              </form>
+            ) : (
+              /* STEP 2: OTP Verification */
+              <div className="space-y-6">
+                {/* OTP Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Enter Verification Code
+                  </label>
+                  <input
+                    type="text"
+                    value={otpCode}
+                    onChange={(e) =>
+                      setOtpCode(e.target.value.replace(/\D/g, ""))
+                    }
+                    maxLength={6}
+                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white text-center text-xl font-mono focus:outline-none focus:border-cyan-400 transition-all"
+                    placeholder="000000"
+                  />
+                  <p className="text-sm text-gray-400 mt-2 text-center">
+                    Enter the 6-digit code sent to your email
+                  </p>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationStep("form")}
+                    className="flex-1 py-3 px-4 border border-cyan-500/30 text-cyan-300 rounded-lg hover:bg-cyan-500/10 transition-all font-medium"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResendOTP}
+                    disabled={isLoading}
+                    className="flex-1 py-3 px-4 border border-cyan-500/30 text-cyan-300 rounded-lg hover:bg-cyan-500/10 transition-all font-medium disabled:opacity-50"
+                  >
+                    Resend Code
+                  </button>
+                  <button
+                    onClick={handleVerifyOTPAndRegister}
+                    disabled={isLoading || otpCode.length !== 6}
+                    className="flex-1 py-3 px-4 bg-gradient-to-br from-cyan-400 to-teal-500 text-black font-bold rounded-lg hover:from-cyan-300 hover:to-teal-400 disabled:opacity-50 transition-all"
+                  >
+                    {isLoading ? (
+                      <span className="flex items-center justify-center">
+                        <svg
+                          className="animate-spin -ml-1 mr-2 h-4 w-4 text-black"
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                        >
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          ></circle>
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                          ></path>
+                        </svg>
+                        Verifying...
+                      </span>
+                    ) : (
+                      "Verify & Create Account"
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </section>

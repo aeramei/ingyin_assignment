@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
       try {
         // Only try to verify if we have an access token
         if (accessToken) {
-          const payload = verifyAccessToken(accessToken);
+          const payload = await verifyAccessToken(accessToken);
 
           // Delete session
           await prisma.session.deleteMany({

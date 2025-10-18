@@ -57,11 +57,12 @@ export async function POST(request: NextRequest) {
     const tokenPayload = {
       userId: user.id,
       email: user.email,
+      name: user.name ?? undefined,
       role: user.role,
     };
 
-    const accessToken = generateAccessToken(tokenPayload);
-    const refreshToken = generateRefreshToken(tokenPayload);
+    const accessToken = await generateAccessToken(tokenPayload);
+    const refreshToken = await generateRefreshToken(tokenPayload);
 
     // Create session
     await prisma.session.create({

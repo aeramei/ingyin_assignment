@@ -1,13 +1,12 @@
-import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import { TokenService } from "@/lib/jwt";
 
-const JWT_SECRET = process.env.JWT_SECRET as string;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET as string;
 const BCRYPT_SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS || "12");
 
 export interface TokenPayload {
   userId: string;
   email: string;
+  name?: string;
   role: string;
 }
 
@@ -16,6 +15,36 @@ export class AuthError extends Error {
     super(message);
     this.name = "AuthError";
   }
+}
+
+// FIX: Use module caching to prevent reinitialization
+let users: Map<string, any>;
+
+function getUserStore() {
+  if (!users) {
+    users = new Map<string, any>();
+  }
+  return users;
+}
+
+export async function findUserByEmail(email: string) {
+  const userStore = getUserStore();
+  return userStore.get(email);
+}
+
+export async function createUser(userData: { email: string; name: string }) {
+  const userStore = getUserStore();
+
+  const user = {
+    id: Date.now().toString(),
+    email: userData.email,
+    name: userData.name,
+    role: "user", // Added role field
+    createdAt: new Date(),
+  };
+
+  userStore.set(userData.email, user);
+  return user;
 }
 
 // Password hashing
@@ -30,40 +59,66 @@ export async function verifyPassword(
   return bcrypt.compare(password, hashedPassword);
 }
 
-// Token generation - Fixed with proper types
-export function generateAccessToken(payload: TokenPayload): string {
-  return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: "15m", // Fixed: use string literal instead of process.env
+// Token generation using TokenService (Edge-compatible)
+export async function generateAccessToken(
+  payload: TokenPayload
+): Promise<string> {
+  const token = await TokenService.generateToken({
+    userId: payload.userId,
+    username: payload.email,
+    name: payload.name,
+    role: payload.role,
   });
+  return token;
 }
 
-export function generateRefreshToken(payload: TokenPayload): string {
-  return jwt.sign(payload, JWT_REFRESH_SECRET, {
-    expiresIn: "7d", // Fixed: use string literal instead of process.env
+export async function generateRefreshToken(
+  payload: TokenPayload
+): Promise<string> {
+  const token = await TokenService.generateToken({
+    userId: payload.userId,
+    username: payload.email,
+    name: payload.name,
+    role: payload.role,
   });
+  return token;
 }
 
-// Token verification
-export function verifyAccessToken(token: string): TokenPayload {
+// Token verification using TokenService
+export async function verifyAccessToken(token: string): Promise<TokenPayload> {
   try {
-    return jwt.verify(token, JWT_SECRET) as TokenPayload;
+    const payload = await TokenService.verifyToken(token);
+    return {
+      userId: payload.userId as string,
+      email: (payload as any).username as string,
+      name: (payload as any).name as string | undefined,
+      role: payload.role as string,
+    };
   } catch (error) {
     throw new AuthError("Invalid or expired access token");
   }
 }
 
-export function verifyRefreshToken(token: string): TokenPayload {
+export async function verifyRefreshToken(token: string): Promise<TokenPayload> {
   try {
-    return jwt.verify(token, JWT_REFRESH_SECRET) as TokenPayload;
+    const payload = await TokenService.verifyToken(token);
+    return {
+      userId: payload.userId as string,
+      email: (payload as any).username as string,
+      name: (payload as any).name as string | undefined,
+      role: payload.role as string,
+    };
   } catch (error) {
     throw new AuthError("Invalid or expired refresh token");
   }
 }
 
 // Utility to get user from token
-export function getUserFromToken(token: string): TokenPayload | null {
+export async function getUserFromToken(
+  token: string
+): Promise<TokenPayload | null> {
   try {
-    return verifyAccessToken(token);
+    return await verifyAccessToken(token);
   } catch (error) {
     return null;
   }

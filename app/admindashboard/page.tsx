@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -15,16 +15,71 @@ interface User {
   status: "active" | "inactive";
 }
 
+// Current admin user shape from /api/me
+interface CurrentUser {
+  id: string;
+  name: string;
+  email: string;
+  role: "admin" | "user";
+}
+
 export default function AdminDashboard() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [loadingUser, setLoadingUser] = useState(true);
+  const [userError, setUserError] = useState<string | null>(null);
   const usersSectionRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  const handleLogout = () => {
+  // Load current admin user from session
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/me", { cache: "no-store" });
+        if (!mounted) return;
+        if (res.status === 401) {
+          setUserError("Not authenticated");
+          setLoadingUser(false);
+          router.push("/signin");
+          return;
+        }
+        const data = await res.json();
+        const roleLower = (data.user.role || "user").toString().toLowerCase();
+        const mapped: CurrentUser = {
+          id: data.user.userId,
+          name: data.user.name || "",
+          email: data.user.email,
+          role: roleLower === "admin" ? "admin" : "user",
+        };
+        // If not admin, redirect to home as a safeguard
+        if (mapped.role !== "admin") {
+          router.push("/");
+          return;
+        }
+        setCurrentUser(mapped);
+        setLoadingUser(false);
+      } catch (e) {
+        if (!mounted) return;
+        setUserError("Failed to load user");
+        setLoadingUser(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (e) {
+      // ignore
+    }
     console.log("Logout clicked - redirecting to landing page");
     setShowLogoutConfirm(false);
 
@@ -173,11 +228,21 @@ export default function AdminDashboard() {
             </Link>
 
             <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-3">
-                <span className="text-cyan-300">Admin: Demo User</span>
-                <span className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded-full text-xs">
-                  ADMIN
-                </span>
+              <div className="flex items-center space-x-3 text-sm sm:text-base">
+                {loadingUser ? (
+                  <span className="text-cyan-300">Loading admin...</span>
+                ) : currentUser ? (
+                  <>
+                    <span className="text-cyan-300 truncate max-w-[14rem]" title={`${currentUser.name} • ${currentUser.email}`}>
+                      Admin: {currentUser.name || currentUser.email}
+                    </span>
+                    <span className={`px-2 py-1 rounded-full text-xs ${currentUser.role === "admin" ? "bg-purple-500/20 text-purple-300" : "bg-cyan-500/20 text-cyan-300"}`}>
+                      {currentUser.role.toUpperCase()}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-red-300">{userError || "Unable to load admin"}</span>
+                )}
               </div>
               <button
                 onClick={() => setShowLogoutConfirm(true)}

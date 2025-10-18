@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-
+import { verifyOTP } from "@/lib/otp";
 import {
   hashPassword,
   generateAccessToken,
@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("Register endpoint hit");
+    console.log("Verify OTP Register endpoint hit");
 
     // Parse request body
     let body;
@@ -27,12 +27,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { email, password, name, company, plan } = body;
+    const { email, password, name, company, plan, otp } = body;
 
-    // Validation - NOW INCLUDING COMPANY AND PLAN
-    if (!email || !password || !name || !company || !plan) {
+    // ✅ ADD OTP VALIDATION
+    if (!otp) {
+      return NextResponse.json({ error: "OTP is required" }, { status: 400 });
+    }
+
+    // Validation - INCLUDING OTP NOW
+    if (!email || !password || !name || !company || !plan || !otp) {
       return NextResponse.json(
-        { error: "Email, password, name, company, and plan are required" },
+        { error: "Email, password, name, company, plan, and OTP are required" },
         { status: 400 }
       );
     }
@@ -43,6 +48,27 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    if (otp.length !== 6) {
+      return NextResponse.json(
+        { error: "OTP must be 6 digits" },
+        { status: 400 }
+      );
+    }
+
+    // ✅ VERIFY OTP FIRST
+    console.log("Verifying OTP for email:", email);
+    const isOTPValid = await verifyOTP(email, otp);
+
+    if (!isOTPValid) {
+      console.log("Invalid OTP provided:", otp);
+      return NextResponse.json(
+        { error: "Invalid or expired OTP" },
+        { status: 400 }
+      );
+    }
+
+    console.log("OTP verified successfully");
 
     // Test database connection first
     try {
@@ -78,8 +104,8 @@ export async function POST(request: NextRequest) {
         email,
         password: hashedPassword,
         name,
-        company: company || "Not specified", // ✅ ADD THIS
-        plan: plan || "starter", // ✅ ADD THIS
+        company: company || "Not specified",
+        plan: plan || "starter",
         role: "USER",
         status: "ACTIVE",
       },
@@ -90,11 +116,12 @@ export async function POST(request: NextRequest) {
     const tokenPayload = {
       userId: user.id,
       email: user.email,
+      name: user.name ?? undefined,
       role: user.role,
     };
 
-    const accessToken = generateAccessToken(tokenPayload);
-    const refreshToken = generateRefreshToken(tokenPayload);
+    const accessToken = await generateAccessToken(tokenPayload);
+    const refreshToken = await generateRefreshToken(tokenPayload);
     console.log("Tokens generated");
 
     // Create session
@@ -111,12 +138,13 @@ export async function POST(request: NextRequest) {
     await prisma.auditLog.create({
       data: {
         userId: user.id,
-        action: "REGISTER",
+        action: "REGISTER_WITH_OTP", // ✅ Changed to reflect OTP registration
         ipAddress: request.headers.get("x-forwarded-for") || "unknown",
         userAgent: request.headers.get("user-agent") || "unknown",
         details: {
           company: company,
           plan: plan,
+          method: "OTP_VERIFICATION", // ✅ Added OTP method
         },
       },
     });
@@ -124,13 +152,14 @@ export async function POST(request: NextRequest) {
 
     const response = NextResponse.json({
       success: true,
+      message: "Registration completed successfully with OTP verification",
       user: {
         id: user.id,
         email: user.email,
         name: user.name,
         role: user.role,
-        company: user.company, // ✅ Include in response
-        plan: user.plan, // ✅ Include in response
+        company: user.company,
+        plan: user.plan,
       },
     });
 
@@ -149,10 +178,10 @@ export async function POST(request: NextRequest) {
       maxAge: 7 * 24 * 60 * 60, // 7 days
     });
 
-    console.log("Registration completed successfully");
+    console.log("OTP Registration completed successfully");
     return response;
   } catch (error) {
-    console.error("Registration error:", error);
+    console.error("OTP Registration error:", error);
 
     // Provide more specific error messages
     let errorMessage = "Internal server error";

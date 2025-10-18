@@ -1,10 +1,11 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 // Define user type
 interface User {
+  id: string;
   name: string;
   email: string;
   role: "user" | "admin";
@@ -12,40 +13,65 @@ interface User {
 
 // Define token payload interface
 interface TokenPayload {
-  userId: string;
-  role: string;
-  system: string;
-  exp: number;
-  iat: number;
+  exp: number | null;
+  iat: number | null;
 }
 
 export default function Dashboard() {
-  const [user, setUser] = useState<User>({
-    name: "Demo User",
-    email: "demo@example.com",
-    role: "user",
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [tokenInfo, setTokenInfo] = useState<TokenPayload>({ exp: null, iat: null });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const router = useRouter();
 
-  // Mock token data for demonstration
-  const decodedPayload: TokenPayload = {
-    userId: "user_12345",
-    role: "user",
-    system: "synctech-prod",
-    iat: 1704040000, // Sun, 31 Dec 2023 16:26:40 GMT
-    exp: 1704040720, // Sun, 31 Dec 2023 16:38:40 GMT
-  };
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/me", { cache: "no-store" });
+        if (res.status === 401) {
+          // Not authenticated
+          if (!mounted) return;
+          setError("Not authenticated");
+          setLoading(false);
+          router.push("/signin");
+          return;
+        }
+        const data = await res.json();
+        if (!mounted) return;
+        const roleLower = (data.user.role || "user").toString().toLowerCase();
+        setUser({
+          id: data.user.userId,
+          name: data.user.name || "",
+          email: data.user.email,
+          role: roleLower === "admin" ? "admin" : "user",
+        });
+        setTokenInfo({
+          exp: data.token?.exp ?? null,
+          iat: data.token?.iat ?? null,
+        });
+        setLoading(false);
+      } catch (e) {
+        if (!mounted) return;
+        setError("Failed to load user");
+        setLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
 
-  const handleLogout = () => {
-    console.log("Logout clicked - redirecting to landing page");
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (e) {
+      // ignore
+    }
     setShowLogoutConfirm(false);
-
-    // Redirect to landing page after a brief delay for better UX
-    setTimeout(() => {
-      router.push("/");
-    }, 500);
+    router.push("/");
   };
 
   const formatTime = (timestamp: number): string => {
@@ -60,7 +86,15 @@ export default function Dashboard() {
     return `${minutes} minute${minutes !== 1 ? "s" : ""}`;
   };
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = (user?.role || "user") === "admin";
+
+  if (loading) {
+    return (
+      <div className="min-h-screen text-white flex items-center justify-center">
+        <div className="text-white/70">Loading your dashboard...</div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -283,7 +317,7 @@ export default function Dashboard() {
         </div>
 
         {/* Token Information Section - Only show for users, not admins */}
-        {!isAdmin && decodedPayload && (
+        {!isAdmin && user && (
           <div className="rounded-2xl p-6 border border-purple-500/20 bg-black/20 mb-8 max-w-4xl mx-auto">
             <h3 className="text-xl font-bold mb-4 text-purple-300 flex items-center">
               <span className="w-2 h-2 bg-purple-400 rounded-full mr-3"></span>
@@ -297,49 +331,49 @@ export default function Dashboard() {
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">User ID:</span>
                   <code className="text-purple-300">
-                    {decodedPayload.userId}
+                    {user?.id}
                   </code>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Role:</span>
                   <span
                     className={`px-2 py-1 rounded-full text-xs ${
-                      decodedPayload.role === "admin"
+                      user?.role === "admin"
                         ? "bg-purple-500/20 text-purple-300"
                         : "bg-cyan-500/20 text-cyan-300"
                     }`}
                   >
-                    {decodedPayload.role}
+                    {user?.role}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">System:</span>
                   <code className="text-green-300">
-                    {decodedPayload.system}
+                    synctech-prod
                   </code>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Issued At:</span>
                   <code className="text-yellow-300 text-sm">
-                    {formatTime(decodedPayload.iat)}
+                    {tokenInfo.iat ? formatTime(tokenInfo.iat) : "-"}
                   </code>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Expires At:</span>
                   <code className="text-red-300 text-sm">
-                    {formatTime(decodedPayload.exp)}
+                    {tokenInfo.exp ? formatTime(tokenInfo.exp) : "-"}
                   </code>
                 </div>
                 <div className="flex justify-between items-center pt-2 border-t border-white/10">
                   <span className="text-gray-400">Time Until Expiry:</span>
                   <span
                     className={`px-2 py-1 rounded text-xs ${
-                      getTimeUntilExpiry(decodedPayload.exp) === "Expired"
+                      tokenInfo.exp && getTimeUntilExpiry(tokenInfo.exp) === "Expired"
                         ? "bg-red-500/20 text-red-300"
                         : "bg-green-500/20 text-green-300"
                     }`}
                   >
-                    {getTimeUntilExpiry(decodedPayload.exp)}
+                    {tokenInfo.exp ? getTimeUntilExpiry(tokenInfo.exp) : "-"}
                   </span>
                 </div>
               </div>
