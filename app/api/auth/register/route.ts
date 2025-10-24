@@ -5,6 +5,10 @@ import {
   generateAccessToken,
   generateRefreshToken,
 } from "@/lib/auth";
+import {
+  validatePassword,
+  defaultRequirements,
+} from "@/lib/passwordValidation"; // ✅ ADD THIS IMPORT
 
 // Use direct Prisma client for now to avoid import issues
 import { PrismaClient } from "@/app/generated/prisma";
@@ -42,9 +46,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (password.length < 6) {
+    // ✅ ENHANCED PASSWORD VALIDATION
+    const passwordValidation = validatePassword(password, defaultRequirements, {
+      email,
+      name,
+      company,
+    });
+
+    if (!passwordValidation.isValid) {
       return NextResponse.json(
-        { error: "Password must be at least 6 characters long" },
+        {
+          error: "Password does not meet security requirements",
+          details: passwordValidation.errors,
+          suggestions: passwordValidation.suggestions,
+        },
         { status: 400 }
       );
     }
@@ -145,6 +160,7 @@ export async function POST(request: NextRequest) {
           company: company,
           plan: plan,
           method: "OTP_VERIFICATION", // ✅ Added OTP method
+          passwordStrength: passwordValidation.strength, // ✅ Added password strength
         },
       },
     });

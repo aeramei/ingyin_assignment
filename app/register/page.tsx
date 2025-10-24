@@ -1,6 +1,10 @@
 "use client";
-import React, { useState, ChangeEvent, FormEvent } from "react";
+import React, { useState, ChangeEvent, FormEvent, useMemo } from "react";
 import Link from "next/link";
+import {
+  validatePassword,
+  getPasswordStrength,
+} from "@/lib/passwordValidation";
 
 // Define the form data type
 interface FormData {
@@ -30,6 +34,29 @@ export default function Register() {
   );
   const [otpCode, setOtpCode] = useState("");
 
+  // ✅ PASSWORD VISIBILITY STATES
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // ✅ PASSWORD STRENGTH CALCULATION
+  const passwordStrength = useMemo(() => {
+    return getPasswordStrength(formData.password);
+  }, [formData.password]);
+
+  // ✅ PASSWORD VALIDATION RESULT
+  const passwordValidation = useMemo(() => {
+    return validatePassword(formData.password, undefined, {
+      email: formData.email,
+      name: formData.fullName,
+      company: formData.company,
+    });
+  }, [formData.password, formData.email, formData.fullName, formData.company]);
+
+  // ✅ TOGGLE PASSWORD VISIBILITY FUNCTIONS
+  const togglePasswordVisibility = () => setShowPassword(!showPassword);
+  const toggleConfirmPasswordVisibility = () =>
+    setShowConfirmPassword(!showConfirmPassword);
+
   const handleChange = (
     e: ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
@@ -47,15 +74,16 @@ export default function Register() {
     setIsLoading(true);
     setError("");
 
-    // Client-side validation
+    // ✅ ENHANCED CLIENT-SIDE VALIDATION
     if (formData.password !== formData.confirmPassword) {
       setError("Passwords don't match!");
       setIsLoading(false);
       return;
     }
 
-    if (formData.password.length < 6) {
-      setError("Password must be at least 6 characters long");
+    // ✅ USE PASSWORD VALIDATION INSTEAD OF BASIC CHECK
+    if (!passwordValidation.isValid) {
+      setError("Please fix password issues before proceeding");
       setIsLoading(false);
       return;
     }
@@ -94,7 +122,7 @@ export default function Register() {
     }
   };
 
-  // ✅ STEP 2: Verify OTP and Register
+  // ✅ STEP 2: Verify OTP and Register (UNCHANGED)
   const handleVerifyOTPAndRegister = async () => {
     setIsLoading(true);
     setError("");
@@ -150,7 +178,6 @@ export default function Register() {
 
     try {
       const response = await fetch("/api/auth/register/send-otp", {
-        // ✅ Add /register
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -314,15 +341,174 @@ export default function Register() {
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Password
                   </label>
-                  <input
-                    type="password"
-                    name="password"
-                    value={formData.password}
-                    onChange={handleChange}
-                    required
-                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
-                    placeholder="Create a strong password"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      name="password"
+                      value={formData.password}
+                      onChange={handleChange}
+                      required
+                      className="w-full px-4 py-3 pr-12 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
+                      placeholder="Create a strong password"
+                    />
+                    {/* ✅ PASSWORD VISIBILITY TOGGLE */}
+                    <button
+                      type="button"
+                      onClick={togglePasswordVisibility}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-cyan-400 transition-colors focus:outline-none"
+                      aria-label={
+                        showPassword ? "Hide password" : "Show password"
+                      }
+                    >
+                      {showPassword ? (
+                        // Eye slash icon (visible)
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                          />
+                        </svg>
+                      ) : (
+                        // Eye icon (hidden)
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* ✅ PASSWORD STRENGTH METER */}
+                  {formData.password && (
+                    <div className="mt-3 space-y-2">
+                      {/* Strength Bar */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-400">
+                          Password strength:
+                        </span>
+                        <span
+                          className={`font-medium ${
+                            passwordStrength.strength === "Very Weak"
+                              ? "text-red-400"
+                              : passwordStrength.strength === "Weak"
+                              ? "text-orange-400"
+                              : passwordStrength.strength === "Medium"
+                              ? "text-yellow-400"
+                              : passwordStrength.strength === "Strong"
+                              ? "text-green-400"
+                              : "text-emerald-400"
+                          }`}
+                        >
+                          {passwordStrength.strength}
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-700 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full transition-all duration-300 ${passwordStrength.color}`}
+                          style={{ width: passwordStrength.width }}
+                        ></div>
+                      </div>
+
+                      {/* Requirements Checklist */}
+                      <div className="text-xs text-gray-400 space-y-1 mt-2">
+                        <div
+                          className={`flex items-center ${
+                            formData.password.length >= 8
+                              ? "text-green-400"
+                              : ""
+                          }`}
+                        >
+                          {formData.password.length >= 8 ? "✓" : "○"} At least 8
+                          characters
+                        </div>
+                        <div
+                          className={`flex items-center ${
+                            /[A-Z]/.test(formData.password)
+                              ? "text-green-400"
+                              : ""
+                          }`}
+                        >
+                          {/[A-Z]/.test(formData.password) ? "✓" : "○"}{" "}
+                          Uppercase letter
+                        </div>
+                        <div
+                          className={`flex items-center ${
+                            /[a-z]/.test(formData.password)
+                              ? "text-green-400"
+                              : ""
+                          }`}
+                        >
+                          {/[a-z]/.test(formData.password) ? "✓" : "○"}{" "}
+                          Lowercase letter
+                        </div>
+                        <div
+                          className={`flex items-center ${
+                            /\d/.test(formData.password) ? "text-green-400" : ""
+                          }`}
+                        >
+                          {/\d/.test(formData.password) ? "✓" : "○"} Number
+                        </div>
+                        <div
+                          className={`flex items-center ${
+                            /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(
+                              formData.password
+                            )
+                              ? "text-green-400"
+                              : ""
+                          }`}
+                        >
+                          {/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(
+                            formData.password
+                          )
+                            ? "✓"
+                            : "○"}{" "}
+                          Special character
+                        </div>
+                      </div>
+
+                      {/* Error Messages */}
+                      {passwordValidation.errors.length > 0 && (
+                        <div className="text-red-400 text-xs mt-2 space-y-1">
+                          {passwordValidation.errors.map((error, index) => (
+                            <div key={index}>⚠ {error}</div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Suggestions */}
+                      {passwordValidation.suggestions.length > 0 && (
+                        <div className="text-cyan-400 text-xs mt-2 space-y-1">
+                          {passwordValidation.suggestions.map(
+                            (suggestion, index) => (
+                              <div key={index}>💡 {suggestion}</div>
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Confirm Password */}
@@ -330,15 +516,73 @@ export default function Register() {
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Confirm Password
                   </label>
-                  <input
-                    type="password"
-                    name="confirmPassword"
-                    value={formData.confirmPassword}
-                    onChange={handleChange}
-                    required
-                    className="w-full px-4 py-3 bg-black/40 border border-cyan-500/30 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 transition-all"
-                    placeholder="Confirm your password"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showConfirmPassword ? "text" : "password"}
+                      name="confirmPassword"
+                      value={formData.confirmPassword}
+                      onChange={handleChange}
+                      required
+                      className={`w-full px-4 py-3 pr-12 bg-black/40 border rounded-lg text-white placeholder-gray-400 focus:outline-none transition-all ${
+                        formData.confirmPassword &&
+                        formData.password !== formData.confirmPassword
+                          ? "border-red-500 focus:border-red-400"
+                          : "border-cyan-500/30 focus:border-cyan-400"
+                      }`}
+                      placeholder="Confirm your password"
+                    />
+                    {/* ✅ CONFIRM PASSWORD VISIBILITY TOGGLE */}
+                    <button
+                      type="button"
+                      onClick={toggleConfirmPasswordVisibility}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-cyan-400 transition-colors focus:outline-none"
+                      aria-label={
+                        showConfirmPassword ? "Hide password" : "Show password"
+                      }
+                    >
+                      {showConfirmPassword ? (
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                          />
+                        </svg>
+                      ) : (
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                  {formData.confirmPassword &&
+                    formData.password !== formData.confirmPassword && (
+                      <div className="text-red-400 text-xs mt-2">
+                        ⚠ Passwords do not match
+                      </div>
+                    )}
                 </div>
 
                 {/* Plan Selection */}
@@ -392,7 +636,11 @@ export default function Register() {
                 {/* Submit Button */}
                 <button
                   type="submit"
-                  disabled={isLoading}
+                  disabled={
+                    isLoading ||
+                    !passwordValidation.isValid ||
+                    formData.password !== formData.confirmPassword
+                  }
                   className="w-full py-4 px-6 rounded-xl font-bold text-lg text-black bg-gradient-to-br from-cyan-400 to-teal-500 hover:from-cyan-300 hover:to-teal-400 shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isLoading ? (
@@ -438,7 +686,7 @@ export default function Register() {
                 </div>
               </form>
             ) : (
-              /* STEP 2: OTP Verification */
+              /* STEP 2: OTP Verification (UNCHANGED) */
               <div className="space-y-6">
                 {/* OTP Input */}
                 <div>

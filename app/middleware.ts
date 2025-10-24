@@ -1,73 +1,194 @@
-import { TokenService } from "@/lib/jwt";
+// middleware.ts
+import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Define routes that should not be protected by the middleware
-const publicRoutes = ["/", "/signin", "/register"];
-
-export async function middleware(req: NextRequest) {
-  const path = req.nextUrl.pathname;
-  console.log("req.nextUrl.pathname");
-  // If the route is public, skip the middleware
-  if (publicRoutes.includes(path)) {
-    return NextResponse.next();
-  }
-
-  // Get the token from the 'token' cookie
-  const token = req.cookies.get("token")?.value;
-
-  // If no token is found, redirect to the sign-in page
-  if (!token) {
-    // Store the intended destination to redirect after login
-    const url = req.nextUrl.clone();
-    url.pathname = "/signin";
-    url.searchParams.set("redirectedFrom", path);
-    return NextResponse.redirect(url);
-  }
-
-  try {
-    // 1. Verify the token's signature and expiration
-    const decodedPayload = TokenService.verifyToken(token);
-
-    // 2. Check user role (optional, add your logic here)
-    // Example: Block access to an '/admin' route for non-admin users
-    if (path.startsWith("/admin") && (await decodedPayload).role !== "admin") {
-      // Or redirect to an 'unauthorized' page
-      return NextResponse.redirect(new URL("/unauthorized", req.url));
-    }
-
-    // 3. Decode and forward user details to the next route via headers
-    const requestHeaders = new Headers(req.headers);
-    // Forwarding the entire payload as a stringified JSON object
-    requestHeaders.set("x-user-payload", JSON.stringify(decodedPayload));
-
-    // Create a new response with the modified headers
-    const response = NextResponse.next({
-      request: {
-        headers: requestHeaders,
-      },
-    });
-
-    return response;
-  } catch (error) {
-    // This block will be executed if the token is expired or invalid
-    console.error("Invalid token:", error);
-
-    // Redirect to the sign-in page if token verification fails
-    const url = req.nextUrl.clone();
-    url.pathname = "/signin";
-    url.searchParams.set("sessionExpired", "true");
-    return NextResponse.redirect(url);
+// Augment NextRequest from next/server to include the nextauth property injected by next-auth middleware
+declare module "next/server" {
+  interface NextRequest {
+    nextauth?: {
+      token?: any;
+      // add more fields here if you want stronger typing for the token
+    };
   }
 }
 
-// This config specifies which routes the middleware should run on.
+// Define public routes that don't require authentication
+const publicRoutes = [
+  "/",
+  "/signin",
+  "/register",
+  "/auth/error",
+  "/verify-totp",
+  "/api/auth",
+];
+
+// Routes that require TOTP verification after initial auth
+const totpProtectedRoutes = [
+  "/dashboard",
+  "/admindashboard",
+  "/profile",
+  "/settings",
+  "/api/user",
+  "/authenticated", // Add authenticated page to protected routes
+];
+
+// Routes that are exempt from TOTP verification
+const totpExemptRoutes = [
+  "/api/auth/2fa/setup",
+  "/api/auth/2fa/verify",
+  "/api/auth/2fa/disable",
+  "/api/auth/2fa/regenerate-backup-codes",
+  "/api/auth/2fa/status",
+];
+
+export default withAuth(
+  function middleware(req: NextRequest) {
+    const path = req.nextUrl.pathname;
+    const token = req.nextauth?.token;
+
+    // If the route is public, allow access
+    if (publicRoutes.some((route) => path.startsWith(route))) {
+      return addSecurityHeaders(req, NextResponse.next());
+    }
+
+    // User is authenticated at this point (withAuth ensures this)
+    console.log(`Authenticated user accessing: ${path}`, {
+      userId: token?.sub,
+      email: token?.email,
+      role: token?.role,
+      isTOTPEnabled: token?.isTOTPEnabled,
+      totpVerified: token?.totpVerified,
+    });
+
+    // Check if route requires TOTP verification
+    const requiresTOTP =
+      totpProtectedRoutes.some((route) => path.startsWith(route)) &&
+      !totpExemptRoutes.some((route) => path.startsWith(route));
+
+    if (requiresTOTP && token) {
+      const userHasTOTP = token.isTOTPEnabled;
+      const isTOTPVerified = token.totpVerified;
+
+      console.log(
+        `TOTP Check - Enabled: ${userHasTOTP}, Verified: ${isTOTPVerified}, Route: ${path}`
+      );
+
+      if (userHasTOTP && !isTOTPVerified) {
+        // TOTP required but not verified - redirect to TOTP verification
+        console.log(`Redirecting to TOTP verification for user: ${token.sub}`);
+        return redirectToTOTPVerification(req, path, token.sub);
+      }
+    }
+
+    // Check user role for admin routes
+    if (path.startsWith("/admin") && token?.role !== "ADMIN") {
+      return NextResponse.redirect(new URL("/unauthorized", req.url));
+    }
+
+    // Add user info to headers for API routes (for your existing API compatibility)
+    if (path.startsWith("/api/") && token) {
+      const requestHeaders = new Headers(req.headers);
+
+      // For compatibility with your existing APIs that expect these headers
+      if (token.sub) {
+        requestHeaders.set("x-user-id", token.sub);
+      }
+      if (token.role) {
+        requestHeaders.set("x-user-role", token.role);
+      }
+      if (token.email) {
+        requestHeaders.set("x-user-email", token.email);
+      }
+
+      // Include the full token payload for existing API compatibility
+      requestHeaders.set(
+        "x-user-payload",
+        JSON.stringify({
+          userId: token.sub,
+          email: token.email,
+          role: token.role,
+          isTOTPEnabled: token.isTOTPEnabled,
+          totpVerified: token.totpVerified,
+        })
+      );
+
+      const response = NextResponse.next({
+        request: {
+          headers: requestHeaders,
+        },
+      });
+
+      return addSecurityHeaders(req, response);
+    }
+
+    return addSecurityHeaders(req, NextResponse.next());
+  },
+  {
+    callbacks: {
+      authorized: ({ req, token }) => {
+        const path = req.nextUrl.pathname;
+
+        // Public routes don't require authentication
+        if (publicRoutes.some((route) => path.startsWith(route))) {
+          return true;
+        }
+
+        // For all other routes, require authentication
+        return !!token;
+      },
+    },
+  }
+);
+
+// Helper function to add security headers
+function addSecurityHeaders(
+  req: NextRequest,
+  response: NextResponse
+): NextResponse {
+  // Security headers for all responses
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("X-XSS-Protection", "1; mode=block");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+
+  // Additional security for sensitive routes
+  if (req.nextUrl.pathname.startsWith("/api/auth/2fa")) {
+    response.headers.set(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate"
+    );
+    response.headers.set("Pragma", "no-cache");
+    response.headers.set("Expires", "0");
+  }
+
+  return response;
+}
+
+// Helper function to redirect to TOTP verification
+function redirectToTOTPVerification(
+  req: NextRequest,
+  originalPath: string,
+  userId: string
+) {
+  const url = req.nextUrl.clone();
+  url.pathname = "/verify-totp";
+  url.searchParams.set("redirectTo", originalPath);
+  url.searchParams.set("userId", userId);
+
+  return NextResponse.redirect(url);
+}
+
+// Configure which routes the middleware should run on
 export const config = {
-  // We use a negative lookahead to exclude files and specific routes.
-  // This matcher will apply the middleware to all paths EXCEPT for:
-  // - /api/... (API routes)
-  // - /_next/static/... (static files)
-  // - /_next/image/... (image optimization files)
-  // - /favicon.ico (favicon file)
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public folder
+     */
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };

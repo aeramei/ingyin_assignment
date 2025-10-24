@@ -1,32 +1,18 @@
-// lib/auth.ts
-import bcrypt from "bcryptjs";
+// lib/auth-options.ts
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaClient } from "@prisma/client";
+import { verifyPassword } from "./auth";
 
 const prisma = new PrismaClient();
-const BCRYPT_SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS || "12");
 
-// Password utilities
-export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-}
-
-export async function verifyPassword(
-  password: string,
-  hashedPassword: string
-): Promise<boolean> {
-  return bcrypt.compare(password, hashedPassword);
-}
-
-// NextAuth configuration
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
       name: "credentials",
       credentials: {
         email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
+        password: { label: "Password", type: "password" }
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
@@ -34,8 +20,8 @@ export const authOptions: NextAuthOptions = {
         }
 
         const user = await prisma.user.findUnique({
-          where: {
-            email: credentials.email.toLowerCase(),
+          where: { 
+            email: credentials.email.toLowerCase() 
           },
           select: {
             id: true,
@@ -45,7 +31,8 @@ export const authOptions: NextAuthOptions = {
             role: true,
             isActive: true,
             isTOTPEnabled: true,
-          },
+            // include other fields you need
+          }
         });
 
         if (!user || !user.password || !user.isActive) {
@@ -61,7 +48,6 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        // Return user with custom fields - this matches our extended User type
         return {
           id: user.id,
           email: user.email,
@@ -69,8 +55,8 @@ export const authOptions: NextAuthOptions = {
           role: user.role,
           isTOTPEnabled: user.isTOTPEnabled,
         };
-      },
-    }),
+      }
+    })
   ],
   callbacks: {
     async jwt({ token, user, trigger, session }) {
@@ -83,7 +69,7 @@ export const authOptions: NextAuthOptions = {
 
       // Update token when session is updated (like after 2FA setup)
       if (trigger === "update" && session) {
-        token.isTOTPEnabled = session.user.isTOTPEnabled;
+        token.isTOTPEnabled = session.isTOTPEnabled;
       }
 
       return token;
@@ -95,7 +81,7 @@ export const authOptions: NextAuthOptions = {
         session.user.isTOTPEnabled = token.isTOTPEnabled as boolean;
       }
       return session;
-    },
+    }
   },
   pages: {
     signIn: "/auth/signin",
@@ -104,7 +90,7 @@ export const authOptions: NextAuthOptions = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   secret: process.env.NEXTAUTH_SECRET,
 };

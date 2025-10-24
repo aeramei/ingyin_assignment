@@ -19,7 +19,10 @@ interface TokenPayload {
 
 export default function Dashboard() {
   const [user, setUser] = useState<User | null>(null);
-  const [tokenInfo, setTokenInfo] = useState<TokenPayload>({ exp: null, iat: null });
+  const [tokenInfo, setTokenInfo] = useState<TokenPayload>({
+    exp: null,
+    iat: null,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -273,6 +276,14 @@ export default function Dashboard() {
               ⚡ Quick Actions
             </h3>
             <div className="space-y-3">
+              {/* 🔒 SECURITY SETTINGS LINK - NEW */}
+              <Link
+                href="/settings/security"
+                className="block w-full py-2 px-4 bg-cyan-500/20 hover:bg-cyan-500/30 rounded-lg transition-all text-center border border-cyan-500/30 hover:border-cyan-400"
+              >
+                🔒 Security Settings
+              </Link>
+
               <button
                 onClick={() => console.log("View Data Pipelines clicked")}
                 className="w-full py-2 px-4 bg-green-500/20 hover:bg-green-500/30 rounded-lg transition-all"
@@ -330,9 +341,7 @@ export default function Dashboard() {
               <div className="bg-black/40 border border-purple-500/20 rounded-lg p-4 space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">User ID:</span>
-                  <code className="text-purple-300">
-                    {user?.id}
-                  </code>
+                  <code className="text-purple-300">{user?.id}</code>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Role:</span>
@@ -348,9 +357,7 @@ export default function Dashboard() {
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">System:</span>
-                  <code className="text-green-300">
-                    synctech-prod
-                  </code>
+                  <code className="text-green-300">synctech-prod</code>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Issued At:</span>
@@ -368,7 +375,8 @@ export default function Dashboard() {
                   <span className="text-gray-400">Time Until Expiry:</span>
                   <span
                     className={`px-2 py-1 rounded text-xs ${
-                      tokenInfo.exp && getTimeUntilExpiry(tokenInfo.exp) === "Expired"
+                      tokenInfo.exp &&
+                      getTimeUntilExpiry(tokenInfo.exp) === "Expired"
                         ? "bg-red-500/20 text-red-300"
                         : "bg-green-500/20 text-green-300"
                     }`}
