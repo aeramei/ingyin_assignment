@@ -130,13 +130,17 @@ export async function POST(request: NextRequest) {
     // Generate tokens
     const tokenPayload = {
       userId: user.id,
+      username: user.email,
       email: user.email,
       name: user.name ?? undefined,
       role: user.role,
-    };
+      isTOTPEnabled: user.isTOTPEnabled,
+      otpRequired: false,
+      otpVerified: true,
+    } as const;
 
-    const accessToken = await generateAccessToken(tokenPayload);
-    const refreshToken = await generateRefreshToken(tokenPayload);
+    const accessToken = await generateAccessToken(tokenPayload as any);
+    const refreshToken = await generateRefreshToken(tokenPayload as any);
     console.log("Tokens generated");
 
     // Create session

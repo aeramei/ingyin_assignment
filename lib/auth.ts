@@ -2,7 +2,9 @@
 import bcrypt from "bcryptjs";
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { PrismaClient } from "@prisma/client";
+import { TokenService, type TokenPayload } from "@/lib/jwt";
+import crypto from "crypto";
+import { PrismaClient } from "@/app/generated/prisma";
 
 const prisma = new PrismaClient();
 const BCRYPT_SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS || "12");
@@ -17,6 +19,58 @@ export async function verifyPassword(
   hashedPassword: string
 ): Promise<boolean> {
   return bcrypt.compare(password, hashedPassword);
+}
+
+// JWT token helpers (re-exported for convenience)
+export async function generateAccessToken(
+  payload: Omit<TokenPayload, "iss" | "exp" | "iat" | "totpVerified">
+): Promise<string> {
+  return TokenService.generateAccessToken(payload);
+}
+
+export async function generateRefreshToken(
+  payload: Omit<TokenPayload, "iss" | "exp" | "iat" | "totpVerified">
+): Promise<string> {
+  return TokenService.generateRefreshToken(payload);
+}
+
+export async function verifyAccessToken(token: string) {
+  return TokenService.verifyAccessToken(token);
+}
+
+export async function verifyRefreshToken(token: string) {
+  return TokenService.verifyRefreshToken(token);
+}
+
+// Basic user helpers used by some routes (OTP flow)
+export async function findUserByEmail(email: string) {
+  return prisma.user.findUnique({
+    where: { email: email.toLowerCase() },
+  });
+}
+
+export async function createUser({
+  email,
+  name,
+}: {
+  email: string;
+  name: string;
+}) {
+  // Generate a strong random password (user can set a real one later)
+  const random = crypto.randomBytes(32).toString("hex");
+  const password = await hashPassword(random);
+
+  return prisma.user.create({
+    data: {
+      email: email.toLowerCase(),
+      name,
+      password,
+      role: "USER",
+      status: "ACTIVE",
+      company: "Not specified",
+      plan: "starter",
+    },
+  });
 }
 
 // NextAuth configuration
@@ -43,12 +97,12 @@ export const authOptions: NextAuthOptions = {
             password: true,
             name: true,
             role: true,
-            isActive: true,
+            status: true,
             isTOTPEnabled: true,
           },
         });
 
-        if (!user || !user.password || !user.isActive) {
+        if (!user || !user.password || user.status !== "ACTIVE") {
           return null;
         }
 

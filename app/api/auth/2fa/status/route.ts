@@ -2,18 +2,38 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-options";
 import { PrismaClient } from "@/app/generated/prisma";
+import { verifyAccessToken } from "@/lib/auth";
 
 const prisma = new PrismaClient();
 
 export async function GET(request: NextRequest) {
   try {
+    // Try NextAuth session first
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let email = session?.user?.email ?? null;
+
+    // If no NextAuth session, fallback to our JWT cookies (accessToken or auth-token)
+    if (!email) {
+      const accessToken =
+        request.cookies.get("accessToken")?.value ||
+        request.cookies.get("auth-token")?.value;
+
+      if (accessToken) {
+        try {
+          const payload = await verifyAccessToken(accessToken);
+          email = payload.email || null;
+        } catch (e) {
+          // ignore verification error here; we'll treat as unauthenticated below
+        }
+      }
+    }
+
+    if (!email) {
+      return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
     }
 
     const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
+      where: { email: email.toLowerCase() },
       select: {
         id: true,
         isTOTPEnabled: true,
@@ -21,6 +41,7 @@ export async function GET(request: NextRequest) {
         lastTOTPUsedAt: true,
         failedTOTPAttempts: true,
         totpLockUntil: true,
+        totpBackupCodes: true,
       },
     });
 
@@ -29,20 +50,16 @@ export async function GET(request: NextRequest) {
     }
 
     const remainingBackupCodes = user.isTOTPEnabled
-      ? await prisma.user
-          .findUnique({
-            where: { id: user.id },
-            select: { totpBackupCodes: true },
-          })
-          .then((u) => u?.totpBackupCodes?.length || 0)
+      ? user.totpBackupCodes?.length || 0
       : 0;
 
     return NextResponse.json({
+      authenticated: true,
       isTOTPEnabled: user.isTOTPEnabled,
       totpEnabledAt: user.totpEnabledAt,
       lastTOTPUsedAt: user.lastTOTPUsedAt,
       remainingBackupCodes,
-      isLocked: user.totpLockUntil && user.totpLockUntil > new Date(),
+      isLocked: Boolean(user.totpLockUntil && user.totpLockUntil > new Date()),
       failedAttempts: user.failedTOTPAttempts,
     });
   } catch (error) {

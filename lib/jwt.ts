@@ -8,7 +8,11 @@ export interface TokenPayload extends JWTPayload {
   name?: string;
   role: string;
   isTOTPEnabled: boolean;
-  totpVerified?: boolean; // Temporary flag for current session
+  // New OTP gating flags for email-based OTP flow
+  otpRequired?: boolean; // true if user must complete OTP before full access
+  otpVerified?: boolean; // true once OTP is completed
+  // Backward-compat with older tokens
+  totpVerified?: boolean; // Temporary flag for legacy TOTP verification tokens
   iss: string; // Issuer
 }
 
@@ -34,15 +38,23 @@ export class TokenService {
 
   // Generate access token (short-lived)
   static async generateAccessToken(
-    payload: Omit<TokenPayload, "iss" | "exp" | "iat" | "totpVerified">,
-    totpVerified: boolean = false
+    payload: Omit<TokenPayload, "iss" | "exp" | "iat" | "totpVerified">
   ): Promise<string> {
-    const claims = {
+    const claims: Record<string, any> = {
       ...payload,
       name: payload.name ?? "",
-      totpVerified,
       type: "access",
     };
+
+    // Propagate OTP gating flags when provided
+    if (typeof (payload as any).otpRequired !== "undefined") {
+      claims.otpRequired = (payload as any).otpRequired;
+    }
+    if (typeof (payload as any).otpVerified !== "undefined") {
+      claims.otpVerified = (payload as any).otpVerified;
+      // keep legacy totpVerified aligned if present in older checks
+      claims.totpVerified = (payload as any).otpVerified;
+    }
 
     const token = await new SignJWT(claims)
       .setProtectedHeader({ alg: "HS256" })
@@ -144,9 +156,16 @@ export class TokenService {
     }
   }
 
-  // Check if token requires TOTP verification
+  // Check if token requires TOTP verification (legacy)
   static requiresTOTPVerification(payload: TokenPayload): boolean {
-    return payload.isTOTPEnabled && !payload.totpVerified;
+    return payload.isTOTPEnabled && payload.totpVerified === false;
+  }
+
+  // Check if token requires OTP gating (email OTP or legacy totpVerified)
+  static requiresOTP(payload: TokenPayload): boolean {
+    const emailOtpGate = payload.otpRequired === true && payload.otpVerified !== true;
+    const legacyTotpGate = payload.isTOTPEnabled && payload.totpVerified === false;
+    return Boolean(emailOtpGate || legacyTotpGate);
   }
 
   // Extract user ID safely from token

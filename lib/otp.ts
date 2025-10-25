@@ -21,6 +21,7 @@ export async function storeOTP(email: string, otp: string): Promise<void> {
     otp,
     expiresAt,
   });
+  console.log(store)
 }
 
 export async function verifyOTP(email: string, otp: string): Promise<boolean> {

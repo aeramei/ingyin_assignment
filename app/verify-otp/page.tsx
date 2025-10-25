@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-const [name, setName] = useState("");
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-export default async function VerifyOTPPage() {
+export default function VerifyOTPPage() {
+  const [name, setName] = useState("");
   const [otp, setOtp] = useState<string[]>(["", "", "", "", "", ""]);
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -17,7 +17,7 @@ export default async function VerifyOTPPage() {
 
   useEffect(() => {
     const userEmail = searchParams.get("email");
-    const userName = searchParams.get("name"); // Get name from URL
+    const userName = searchParams.get("name");
     if (userEmail) setEmail(userEmail);
     if (userName) setName(userName);
   }, [searchParams]);
@@ -29,13 +29,6 @@ export default async function VerifyOTPPage() {
     }
   }, [countdown]);
 
-  // Update the verify call
-  const response = await fetch("/api/auth/verify-otp", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, otp: String, name }),
-  });
-
   const handleChange = (index: number, value: string) => {
     if (!/^\d?$/.test(value)) return;
 
@@ -43,7 +36,6 @@ export default async function VerifyOTPPage() {
     newOtp[index] = value;
     setOtp(newOtp);
 
-    // Auto-focus next input
     if (value && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
@@ -61,8 +53,8 @@ export default async function VerifyOTPPage() {
     const pastedNumbers = pastedData.replace(/\D/g, "").split("").slice(0, 6);
 
     const newOtp = [...otp];
-    pastedNumbers.forEach((num, index) => {
-      if (index < 6) newOtp[index] = num;
+    pastedNumbers.forEach((num, idx) => {
+      if (idx < 6) newOtp[idx] = num;
     });
 
     setOtp(newOtp);
@@ -86,14 +78,13 @@ export default async function VerifyOTPPage() {
       const response = await fetch("/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp: otpString }),
+        body: JSON.stringify({ email, otp: otpString, name }),
       });
 
       const data = await response.json();
 
-      if (data.success) {
-        // OTP verified successfully
-        router.push("/dashboard"); // or wherever you want to redirect
+      if (response.ok && data.success) {
+        router.push("/authenticated");
       } else {
         setError(data.error || "Invalid OTP");
       }
@@ -109,16 +100,18 @@ export default async function VerifyOTPPage() {
     setError("");
 
     try {
-      const response = await fetch("/api/auth/send-otp", {
+      // For login flow, call the login OTP endpoint to resend
+      const response = await fetch("/api/auth/login/request-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, name: "User" }), // You might want to store name somewhere
+        // In OTP resend flow, rely on authenticated cookie; no password required
+        body: JSON.stringify({ email }),
       });
 
       const data = await response.json();
 
-      if (data.success) {
-        setCountdown(60); // 60 seconds countdown
+      if (response.ok && data.success) {
+        setCountdown(60);
         setOtp(["", "", "", "", "", ""]);
         inputRefs.current[0]?.focus();
       } else {

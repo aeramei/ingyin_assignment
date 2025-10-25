@@ -1,7 +1,7 @@
 // lib/auth-options.ts
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@/app/generated/prisma";
 import { verifyPassword } from "./auth";
 
 const prisma = new PrismaClient();
@@ -20,8 +20,8 @@ export const authOptions: NextAuthOptions = {
         }
 
         const user = await prisma.user.findUnique({
-          where: { 
-            email: credentials.email.toLowerCase() 
+          where: {
+            email: credentials.email.toLowerCase()
           },
           select: {
             id: true,
@@ -29,13 +29,13 @@ export const authOptions: NextAuthOptions = {
             password: true,
             name: true,
             role: true,
-            isActive: true,
+            status: true,
             isTOTPEnabled: true,
             // include other fields you need
           }
         });
 
-        if (!user || !user.password || !user.isActive) {
+        if (!user || !user.password || user.status !== "ACTIVE") {
           return null;
         }
 
@@ -69,7 +69,7 @@ export const authOptions: NextAuthOptions = {
 
       // Update token when session is updated (like after 2FA setup)
       if (trigger === "update" && session) {
-        token.isTOTPEnabled = session.isTOTPEnabled;
+        token.isTOTPEnabled = session.user?.isTOTPEnabled as boolean;
       }
 
       return token;

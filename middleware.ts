@@ -3,84 +3,102 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 // Define routes that should not be protected by the middleware
-const publicRoutes = ["/", "/signin", "/register"];
+// NOTE: We intentionally exclude "/verify-otp" from public skipping so we can
+// append email/name params from JWT when needed.
+const publicRoutes = ["/", "/signin", "/register", "/auth/signin", "/auth/error"]; 
 
 export async function middleware(req: NextRequest) {
-    const path = req.nextUrl.pathname;
-    console.log(`[Middleware] Executing for path: ${path}`);
+  const path = req.nextUrl.pathname;
+  // console.log(`[Middleware] Executing for path: ${path}`);
 
-    // If the route is public, skip the middleware
-    if (publicRoutes.includes(path)) {
-        console.log(`[Middleware] Public route accessed: ${path}`);
-        return NextResponse.next();
-    }
-
-    console.log(`[Middleware] Protected route accessed: ${path}`);
-    // Get the token from the 'session' cookie
+  // Special handling for /verify-otp (not fully public): we may add params
+  if (path === "/verify-otp") {
     const token = req.cookies.get("accessToken")?.value;
-
-    // If no token is found, redirect to the sign-in page
     if (!token) {
-        console.log("[Middleware] No token found. Redirecting to /signin.");
-        // Store the intended destination to redirect after login
-        const url = req.nextUrl.clone();
-        url.pathname = "/signin";
-        url.searchParams.set("redirectedFrom", path);
-        return NextResponse.redirect(url);
+      // Allow reaching the page without token (e.g., first-time deep link)
+      return NextResponse.next();
     }
-
-    console.log(`[Middleware] Token found: ${token}`);
 
     try {
-        // 1. Verify the token's signature and expiration
-        console.log("[Middleware] Verifying token...");
-        const decodedPayload = await TokenService.verifyToken(token);
-        console.log("[Middleware] Token verified successfully. Payload:", decodedPayload);
+      const decoded = await TokenService.verifyAccessToken(token);
+      // If OTP already satisfied, redirect away from verify page
+      if (!TokenService.requiresOTP(decoded)) {
+        return NextResponse.redirect(new URL("/authenticated", req.url));
+      }
 
-        // 2. Check user role for admin-only routes (normalize role to lowercase)
-        if (path.startsWith("/admindashboard")) {
-            const role = String((decodedPayload as any).role || "").toLowerCase();
-            if (role !== "admin") {
-                console.log(`[Middleware] Non-admin user trying to access /admindashboard. Redirecting to /.`);
-                // Redirect non-admins to home page
-                return NextResponse.redirect(new URL("/", req.url));
-            }
-        }
+      // Ensure email and name are present as query params
+      const url = req.nextUrl.clone();
+      const haveEmail = url.searchParams.has("email");
+      const haveName = url.searchParams.has("name");
+      const email = (decoded as any).email || "";
+      const name = (decoded as any).name || "";
 
-        // 3. Decode and forward user details to the next route via headers
-        const requestHeaders = new Headers(req.headers);
-        // Forwarding the entire payload as a stringified JSON object
-        requestHeaders.set("x-user-payload", JSON.stringify(decodedPayload));
-
-        // Create a new response with the modified headers
-        const response = NextResponse.next({
-            request: {
-                headers: requestHeaders,
-            },
-        });
-
-        console.log("[Middleware] Forwarding request to next handler.");
-        return response;
-    } catch (error) {
-        // This block will be executed if the token is expired or invalid
-        console.error("[Middleware] Invalid token:", error);
-
-        // Redirect to the sign-in page if token verification fails
-        const url = req.nextUrl.clone();
-        url.pathname = "/signin";
-        url.searchParams.set("sessionExpired", "true");
-        console.log("[Middleware] Redirecting to /signin due to invalid token.");
+      if (!haveEmail || !haveName) {
+        if (!haveEmail && email) url.searchParams.set("email", email);
+        if (!haveName && name) url.searchParams.set("name", name);
         return NextResponse.redirect(url);
+      }
+
+      // Already has required params
+      return NextResponse.next();
+    } catch {
+      // Token invalid/expired: let the page load; it can handle re-request or show error
+      return NextResponse.next();
     }
+  }
+
+  // If the route is public, skip the rest of middleware
+  if (publicRoutes.includes(path)) {
+    return NextResponse.next();
+  }
+
+  // Protected route handling
+  const token = req.cookies.get("accessToken")?.value;
+
+  if (!token) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/signin";
+    url.searchParams.set("redirectedFrom", path);
+    return NextResponse.redirect(url);
+  }
+
+  try {
+    const decodedPayload = await TokenService.verifyAccessToken(token);
+
+    // OTP gating: redirect to /verify-otp with email/name params
+    if (TokenService.requiresOTP(decodedPayload as any)) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/verify-otp";
+      const email = (decodedPayload as any).email || "";
+      const name = (decodedPayload as any).name || "";
+      if (email) url.searchParams.set("email", email);
+      if (name) url.searchParams.set("name", name);
+      return NextResponse.redirect(url);
+    }
+
+    // Admin routes
+    if (path.startsWith("/admindashboard")) {
+      const role = String((decodedPayload as any).role || "").toLowerCase();
+      if (role !== "admin") {
+        return NextResponse.redirect(new URL("/", req.url));
+      }
+    }
+
+    // Forward user payload header
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set("x-user-payload", JSON.stringify(decodedPayload));
+
+    return NextResponse.next({
+      request: { headers: requestHeaders },
+    });
+  } catch (error) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/signin";
+    url.searchParams.set("sessionExpired", "true");
+    return NextResponse.redirect(url);
+  }
 }
 
-// This config specifies which routes the middleware should run on.
 export const config = {
-    // We use a negative lookahead to exclude files and specific routes.
-    // This matcher will apply the middleware to all paths EXCEPT for:
-    // - /api/... (API routes)
-    // - /_next/static/... (static files)
-    // - /_next/image/... (image optimization files)
-    // - /favicon.ico (favicon file)
-    matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)" ],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 };

@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
 
     const user = {
       userId: payload.userId as string,
-      email: (payload as any).username as string,
+      email: (payload as any).email as string,
       name: (payload as any).name as string | undefined,
       role: payload.role as string,
     };
