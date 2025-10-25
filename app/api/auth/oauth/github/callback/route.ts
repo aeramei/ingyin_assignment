@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeGitHubCodeForToken, getGitHubUserProfile } from "@/lib/oauth";
+import { exchangeGitHubCodeForToken, getGitHubUserProfile, githubOAuthConfig } from "@/lib/oauth";
 import { PrismaClient } from "@/app/generated/prisma";
+import { generateOTP, storeOTP } from "@/lib/otp";
+import { sendOTPEmail } from "@/lib/gmail";
+import { TokenService } from "@/lib/jwt";
+import { setPreAuthAccessCookie, clearNextAuthCookies } from "@/lib/cookies";
+import { createRequestLogger, redact } from "@/lib/logger";
 
 export async function GET(request: NextRequest) {
   let prisma;
+  const log = createRequestLogger("oauth/github/callback");
+  const start = Date.now();
 
   try {
     prisma = new PrismaClient();
@@ -13,9 +20,16 @@ export async function GET(request: NextRequest) {
     const state = url.searchParams.get("state");
     const error = url.searchParams.get("error");
 
+    log.info("Incoming GitHub OAuth callback", {
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+      error: error || undefined,
+      redirectUriPath: new URL(githubOAuthConfig.redirectUri).pathname,
+    });
+
     // Check for OAuth errors
     if (error) {
-      console.error("GitHub OAuth error:", error);
+      log.warn("Provider returned error", { error });
       return NextResponse.redirect(
         new URL("/signin?error=oauth_failed", request.url)
       );
@@ -24,14 +38,14 @@ export async function GET(request: NextRequest) {
     // Validate state parameter
     const storedState = request.cookies.get("oauth_state")?.value;
     if (!state || state !== storedState) {
-      console.error("Invalid state parameter");
+      log.warn("Invalid state parameter", { state: state ? state.slice(0, 6) + "***" : null, stored: storedState ? storedState.slice(0,6)+"***" : null });
       return NextResponse.redirect(
         new URL("/signin?error=invalid_state", request.url)
       );
     }
 
     if (!code) {
-      console.error("No authorization code received");
+      log.warn("Missing authorization code");
       return NextResponse.redirect(
         new URL("/signin?error=no_code", request.url)
       );
@@ -39,15 +53,17 @@ export async function GET(request: NextRequest) {
 
     // Exchange code for access token
     const accessToken = await exchangeGitHubCodeForToken(code);
+    log.info("Provider token obtained", { token: redact(accessToken) });
 
     // Get user profile from GitHub
     const userProfile = await getGitHubUserProfile(accessToken);
-    console.log("GitHub user profile:", userProfile);
+    log.info("Provider profile fetched", { emailDomain: (userProfile.email || "").split("@")[1] || null, idPrefix: userProfile.id?.slice(0,6) });
 
     // Check if user already exists
     let user = await prisma.user.findUnique({
       where: { email: userProfile.email },
     });
+    log.debug("User lookup complete", { exists: Boolean(user) });
 
     // Create new user if doesn't exist
     if (!user) {
@@ -65,127 +81,78 @@ export async function GET(request: NextRequest) {
           authProviderId: userProfile.id, // GitHub user ID
         },
       });
-      console.log("New GitHub OAuth user created:", user.id);
+      log.info("Created new GitHub OAuth user", { userId: user.id });
     }
 
     // Check if user is active
     if (user.status !== "ACTIVE") {
+      log.warn("Account inactive", { userId: user.id, status: user.status });
       return NextResponse.redirect(
         new URL("/signin?error=account_inactive", request.url)
       );
     }
 
-    // Check if TOTP is enabled for this user
-    if (user.isTOTPEnabled) {
-      console.log("TOTP required for GitHub OAuth user:", user.id);
+    // Always require OTP after OAuth (GitHub)
+    const otp = generateOTP();
+    await storeOTP(user.email, otp);
+    log.debug("OTP generated and stored");
 
-      // Generate TOTP verification token
-      const { TokenService } = await import("@/lib/jwt");
-      const totpToken = await TokenService.generateTOTPVerificationToken(
-        user.id,
-        user.email,
-        user.email,
-        user.role,
-        user.name || undefined
-      );
-
-      // Redirect to TOTP verification
-      const response = NextResponse.redirect(
-        new URL(
-          `/verify-totp?redirectTo=/authenticated&userId=${
-            user.id
-          }&totpToken=${encodeURIComponent(totpToken)}`,
-          request.url
-        )
-      );
-
-      // Clear OAuth state cookie
-      response.cookies.delete("oauth_state");
-
-      console.log("Redirecting GitHub OAuth user to TOTP verification");
-      return response;
+    // Send OTP via email
+    const sent = await sendOTPEmail(user.email, otp, user.name || "User");
+    if (!sent) {
+      log.error("Failed to send OTP email");
+      return NextResponse.redirect(new URL("/signin?error=send_failed", request.url));
     }
+    log.info("OTP email sent");
 
-    // Generate tokens using the new TokenService (No TOTP required)
-    const { TokenService } = await import("@/lib/jwt");
-    const jwtAccessToken = await TokenService.generateAccessToken(
-      {
-        userId: user.id,
-        email: user.email,
-        username: user.email,
-        name: user.name || undefined,
-        role: user.role,
-        isTOTPEnabled: user.isTOTPEnabled,
-      },
-      false
-    ); // totpVerified = false for OAuth
-
-    const refreshToken = await TokenService.generateRefreshToken({
+    // Issue short-lived pre-auth access token: requires OTP
+    const preAuthPayload = {
       userId: user.id,
-      email: user.email,
       username: user.email,
+      email: user.email,
       name: user.name || undefined,
       role: user.role,
       isTOTPEnabled: user.isTOTPEnabled,
-    });
+      otpRequired: true,
+      otpVerified: false,
+    } as const;
 
-    // Create session
-    await prisma.session.create({
-      data: {
-        userId: user.id,
-        token: refreshToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-      },
-    });
+    const preAuthAccessToken = await TokenService.generateAccessToken(preAuthPayload as any);
+    log.debug("Pre-auth access token minted");
 
-    // Create audit log
+    // Audit log (OTP sent for OAuth login)
     await prisma.auditLog.create({
       data: {
         userId: user.id,
-        action: "LOGIN_GITHUB_OAUTH",
+        action: "LOGIN_OTP_SENT",
         ipAddress: request.headers.get("x-forwarded-for") || "unknown",
         userAgent: request.headers.get("user-agent") || "unknown",
-        details: {
-          provider: "github",
-          providerId: userProfile.id,
-          totpRequired: false,
-        },
+        details: { provider: "github", ttlMinutes: 10 },
       },
     });
+    log.debug("Audit log recorded");
 
-    // Create response with redirect to success page
-    const response = NextResponse.redirect(
-      new URL("/authenticated", request.url)
-    );
+    // Redirect to verify-otp with prefilled params
+    const verifyUrl = new URL("/verify-otp", request.url);
+    verifyUrl.searchParams.set("email", user.email);
+    if (user.name) verifyUrl.searchParams.set("name", user.name);
 
-    // Set HTTP-only cookies
-    response.cookies.set("accessToken", jwtAccessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 15 * 60, // 15 minutes
-      path: "/",
-    });
-
-    response.cookies.set("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60, // 7 days
-      path: "/",
-    });
-
-    // Clear OAuth state cookie
+    const response = NextResponse.redirect(verifyUrl);
+    setPreAuthAccessCookie(response, preAuthAccessToken);
+    clearNextAuthCookies(response);
     response.cookies.delete("oauth_state");
 
-    console.log("GitHub OAuth login successful for user:", user.id);
+    log.info("Redirecting to verify-otp", { path: verifyUrl.pathname, query: verifyUrl.search });
     return response;
   } catch (error) {
-    console.error("GitHub OAuth callback error:", error);
+    const logErr = String(error);
+    log.error("GitHub OAuth callback error", { error: logErr });
     return NextResponse.redirect(
       new URL("/signin?error=oauth_failed", request.url)
     );
   } finally {
+    const ms = Date.now() - start;
+    log.info("Callback finished", { durationMs: ms });
     if (prisma) {
       await prisma.$disconnect();
     }

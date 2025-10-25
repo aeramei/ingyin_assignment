@@ -1,6 +1,7 @@
 import { TokenService } from "@/lib/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { createRequestLogger } from "@/lib/logger";
 
 // Define routes that should not be protected by the middleware
 // NOTE: We intentionally exclude "/verify-otp" from public skipping so we can
@@ -9,12 +10,14 @@ const publicRoutes = ["/", "/signin", "/register", "/auth/signin", "/auth/error"
 
 export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
-  // console.log(`[Middleware] Executing for path: ${path}`);
+  const log = createRequestLogger("middleware");
+  log.debug("Executing middleware", { path });
 
   // Special handling for /verify-otp (not fully public): we may add params
   if (path === "/verify-otp") {
     const token = req.cookies.get("accessToken")?.value;
     if (!token) {
+      log.debug("No token on verify-otp; allowing page load");
       // Allow reaching the page without token (e.g., first-time deep link)
       return NextResponse.next();
     }
@@ -23,6 +26,7 @@ export async function middleware(req: NextRequest) {
       const decoded = await TokenService.verifyAccessToken(token);
       // If OTP already satisfied, redirect away from verify page
       if (!TokenService.requiresOTP(decoded)) {
+        log.debug("OTP already satisfied; redirecting away from verify-otp");
         return NextResponse.redirect(new URL("/authenticated", req.url));
       }
 
@@ -36,6 +40,7 @@ export async function middleware(req: NextRequest) {
       if (!haveEmail || !haveName) {
         if (!haveEmail && email) url.searchParams.set("email", email);
         if (!haveName && name) url.searchParams.set("name", name);
+        log.debug("Added query params to verify-otp", { haveEmail, haveName });
         return NextResponse.redirect(url);
       }
 
@@ -43,12 +48,14 @@ export async function middleware(req: NextRequest) {
       return NextResponse.next();
     } catch {
       // Token invalid/expired: let the page load; it can handle re-request or show error
+      log.debug("Invalid/expired token on verify-otp; allowing page load");
       return NextResponse.next();
     }
   }
 
   // If the route is public, skip the rest of middleware
   if (publicRoutes.includes(path)) {
+    log.debug("Public route; skipping auth");
     return NextResponse.next();
   }
 
@@ -59,6 +66,7 @@ export async function middleware(req: NextRequest) {
     const url = req.nextUrl.clone();
     url.pathname = "/signin";
     url.searchParams.set("redirectedFrom", path);
+    log.debug("Missing token; redirecting to signin", { path });
     return NextResponse.redirect(url);
   }
 
@@ -73,6 +81,7 @@ export async function middleware(req: NextRequest) {
       const name = (decodedPayload as any).name || "";
       if (email) url.searchParams.set("email", email);
       if (name) url.searchParams.set("name", name);
+      log.debug("OTP required; redirecting to verify-otp");
       return NextResponse.redirect(url);
     }
 
@@ -80,6 +89,7 @@ export async function middleware(req: NextRequest) {
     if (path.startsWith("/admindashboard")) {
       const role = String((decodedPayload as any).role || "").toLowerCase();
       if (role !== "admin") {
+        log.debug("Admin route access denied; redirecting to home", { role });
         return NextResponse.redirect(new URL("/", req.url));
       }
     }
@@ -87,6 +97,7 @@ export async function middleware(req: NextRequest) {
     // Forward user payload header
     const requestHeaders = new Headers(req.headers);
     requestHeaders.set("x-user-payload", JSON.stringify(decodedPayload));
+    log.debug("Auth passed; forwarding request");
 
     return NextResponse.next({
       request: { headers: requestHeaders },
@@ -95,6 +106,7 @@ export async function middleware(req: NextRequest) {
     const url = req.nextUrl.clone();
     url.pathname = "/signin";
     url.searchParams.set("sessionExpired", "true");
+    log.debug("Token verification failed; redirecting to signin");
     return NextResponse.redirect(url);
   }
 }

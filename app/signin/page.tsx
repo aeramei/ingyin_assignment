@@ -129,11 +129,8 @@ export default function Login() {
       setSocialLoading(provider);
       setError("");
 
-      // Redirect to OAuth provider
-      const redirectUri = "/authenticated"; // Default redirect after login
-      window.location.href = `/api/auth/oauth/${provider}?redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}`;
+      // Redirect to OAuth provider (server enforces fixed redirect_uri)
+      window.location.href = `/api/auth/oauth/${provider}`;
     } catch (error) {
       console.error(`${provider} login error:`, error);
       setError(`Failed to start ${provider} login. Please try again.`);

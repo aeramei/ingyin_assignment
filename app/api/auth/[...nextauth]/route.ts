@@ -4,6 +4,7 @@ import { JWT } from "next-auth/jwt";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import GitHubProvider from "next-auth/providers/github";
+import { createRequestLogger } from "@/lib/logger";
 
 // Extend built-in types
 declare module "next-auth" {
@@ -156,15 +157,27 @@ export const authOptions: AuthOptions = {
       return session;
     },
     async redirect({ url, baseUrl }) {
-      // Redirect OAuth users to /authenticated
-      if (url.includes("/api/auth/callback")) {
-        return `${baseUrl}/authenticated`;
-      }
+      const log = createRequestLogger("nextauth/redirect");
+      try {
+        if (url.includes("/api/auth/callback")) {
+          log.debug("OAuth callback detected; routing to /authenticated", { baseUrl });
+          return `${baseUrl}/authenticated`;
+        }
 
-      // For other cases, use default behavior
-      if (url.startsWith("/")) return `${baseUrl}${url}`;
-      else if (new URL(url).origin === baseUrl) return url;
-      return baseUrl;
+        // For other cases, use default behavior
+        if (url.startsWith("/")) {
+          log.debug("Internal relative redirect", { to: url });
+          return `${baseUrl}${url}`;
+        } else if (new URL(url).origin === baseUrl) {
+          log.debug("Same-origin absolute redirect", { to: url });
+          return url;
+        }
+        log.debug("Fallback redirect to baseUrl", { baseUrl });
+        return baseUrl;
+      } catch (e) {
+        log.error("redirect callback error", { error: String(e) });
+        return baseUrl;
+      }
     },
   },
   pages: {
