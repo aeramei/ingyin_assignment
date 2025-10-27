@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
         verificationCode
       );
       isValid = result.success;
-      log.debug("TOTP code verification result", { isValid, delta: result.delta });
+      log.debug("TOTP code verification result", { isValid, delta: result.success });
     }
 
     if (!isValid) {

@@ -536,9 +536,8 @@ export default function Login() {
                   <span className="text-sm text-gray-300">Remember me</span>
                 </label>
                 <a
-                  href="#"
+                  href="/forgot-password"
                   className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
-                  onClick={(e) => e.preventDefault()}
                 >
                   Forgot password?
                 </a>

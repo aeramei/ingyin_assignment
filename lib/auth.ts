@@ -38,6 +38,14 @@ export async function verifyAccessToken(token: string) {
   return TokenService.verifyAccessToken(token);
 }
 
+export async function verifyAdmin(token: string): Promise<TokenPayload> {
+    const payload = await TokenService.verifyAccessToken(token);
+    if (payload.role !== 'ADMIN') {
+        throw new Error('Unauthorized: Admin role required');
+    }
+    return payload;
+}
+
 export async function verifyRefreshToken(token: string) {
   return TokenService.verifyRefreshToken(token);
 }

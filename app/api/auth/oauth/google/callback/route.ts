@@ -134,8 +134,8 @@ export async function GET(request: NextRequest) {
         // If TOTP is NOT enabled, send an email OTP as a fallback 2FA
         try {
             const otp = generateOTP();
-            await storeOTP(user.id, otp, "EMAIL_VERIFICATION");
-            await sendOTPEmail(user.email, otp);
+            await storeOTP(user.id, otp);
+            await sendOTPEmail(user.email, otp, user.name ?? "User");
 
             const otpToken = await TokenService.generateTOTPVerificationToken(
                 user.id,

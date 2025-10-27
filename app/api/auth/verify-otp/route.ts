@@ -35,8 +35,7 @@ export async function POST(request: NextRequest) {
 
     const isValid = await verifyOTP(
       tokenPayload.userId,
-      verificationCode,
-      "EMAIL_VERIFICATION"
+      verificationCode
     );
 
     if (!isValid) {

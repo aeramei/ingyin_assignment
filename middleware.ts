@@ -4,7 +4,19 @@ import type { NextRequest } from "next/server";
 import { createRequestLogger } from "@/lib/logger";
 
 // Define routes that should not be protected by the middleware
-const publicRoutes = ["/", "/signin", "/register", "/auth/signin", "/auth/error", "/verify-totp", "/verify-otp"]; 
+const publicRoutes = [
+    "/", 
+    "/signin", 
+    "/register", 
+    "/auth/signin", 
+    "/auth/error", 
+    "/verify-totp", 
+    "/verify-otp",
+    "/forgot-password",
+    "/reset-password/verify-totp",
+    "/reset-password/verify-otp",
+    "/reset-password/confirm"
+]; 
 
 export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
