@@ -157,11 +157,11 @@ export async function POST(request: NextRequest) {
                 },
             });
 
-            return NextResponse.json({
+            // Set a short-lived cookie with the temp TOTP token so /verify-totp can consume it server-side
+            const res = NextResponse.json({
                 success: true,
                 requiresTOTP: true,
                 message: "TOTP verification required",
-                totpToken,
                 userId: user.id,
                 user: {
                     id: user.id,
@@ -169,6 +169,14 @@ export async function POST(request: NextRequest) {
                     name: user.name,
                 },
             });
+            res.cookies.set("totp_temp_token", totpToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "lax",
+                maxAge: 10 * 60, // 10 minutes
+                path: "/",
+            });
+            return res;
         }
 
         // ✅ NO TOTP REQUIRED - GENERATE FINAL TOKENS

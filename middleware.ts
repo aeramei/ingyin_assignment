@@ -4,54 +4,12 @@ import type { NextRequest } from "next/server";
 import { createRequestLogger } from "@/lib/logger";
 
 // Define routes that should not be protected by the middleware
-// NOTE: We intentionally exclude "/verify-otp" from public skipping so we can
-// append email/name params from JWT when needed.
-const publicRoutes = ["/", "/signin", "/register", "/auth/signin", "/auth/error"]; 
+const publicRoutes = ["/", "/signin", "/register", "/auth/signin", "/auth/error", "/verify-totp", "/verify-otp"]; 
 
 export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
   const log = createRequestLogger("middleware");
   log.debug("Executing middleware", { path });
-
-  // Special handling for /verify-otp (not fully public): we may add params
-  if (path === "/verify-otp") {
-    const token = req.cookies.get("accessToken")?.value;
-    if (!token) {
-      log.debug("No token on verify-otp; allowing page load");
-      // Allow reaching the page without token (e.g., first-time deep link)
-      return NextResponse.next();
-    }
-
-    try {
-      const decoded = await TokenService.verifyAccessToken(token);
-      // If OTP already satisfied, redirect away from verify page
-      if (!TokenService.requiresOTP(decoded)) {
-        log.debug("OTP already satisfied; redirecting away from verify-otp");
-        return NextResponse.redirect(new URL("/authenticated", req.url));
-      }
-
-      // Ensure email and name are present as query params
-      const url = req.nextUrl.clone();
-      const haveEmail = url.searchParams.has("email");
-      const haveName = url.searchParams.has("name");
-      const email = (decoded as any).email || "";
-      const name = (decoded as any).name || "";
-
-      if (!haveEmail || !haveName) {
-        if (!haveEmail && email) url.searchParams.set("email", email);
-        if (!haveName && name) url.searchParams.set("name", name);
-        log.debug("Added query params to verify-otp", { haveEmail, haveName });
-        return NextResponse.redirect(url);
-      }
-
-      // Already has required params
-      return NextResponse.next();
-    } catch {
-      // Token invalid/expired: let the page load; it can handle re-request or show error
-      log.debug("Invalid/expired token on verify-otp; allowing page load");
-      return NextResponse.next();
-    }
-  }
 
   // If the route is public, skip the rest of middleware
   if (publicRoutes.includes(path)) {
@@ -73,15 +31,12 @@ export async function middleware(req: NextRequest) {
   try {
     const decodedPayload = await TokenService.verifyAccessToken(token);
 
-    // OTP gating: redirect to /verify-otp with email/name params
+    // OTP gating: redirect to /verify-totp and preserve intended path (no PII in URL)
     if (TokenService.requiresOTP(decodedPayload as any)) {
       const url = req.nextUrl.clone();
-      url.pathname = "/verify-otp";
-      const email = (decodedPayload as any).email || "";
-      const name = (decodedPayload as any).name || "";
-      if (email) url.searchParams.set("email", email);
-      if (name) url.searchParams.set("name", name);
-      log.debug("OTP required; redirecting to verify-otp");
+      url.pathname = "/verify-totp";
+      url.searchParams.set("redirectTo", path);
+      log.debug("OTP required; redirecting to verify-totp", { redirectTo: path });
       return NextResponse.redirect(url);
     }
 

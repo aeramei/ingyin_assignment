@@ -197,6 +197,13 @@ export default function Login() {
         throw new Error(data.error || "Sign in failed");
       }
 
+      // If the account has TOTP enabled, require authenticator verification step
+      if (data.requiresTOTP) {
+        // A short‑lived cookie `totp_temp_token` was set by the server; redirect to verification page
+        window.location.href = "/verify-totp";
+        return;
+      }
+
       setSuccess(
         `Success! Signed in as ${data.user.role === "ADMIN" ? "Admin" : "User"}`
       );

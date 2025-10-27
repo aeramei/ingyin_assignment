@@ -16,6 +16,8 @@ export default function SecuritySettings() {
   const [totpStatus, setTOTPStatus] = useState<TOTPStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showTOTPSetup, setShowTOTPSetup] = useState(false);
+  const [showDisablePrompt, setShowDisablePrompt] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -44,11 +46,8 @@ export default function SecuritySettings() {
   };
 
   const handleDisableTOTP = async () => {
-    if (
-      !confirm(
-        "Are you sure you want to disable Two-Factor Authentication? This reduces your account security."
-      )
-    ) {
+    if (!verificationCode) {
+      setError("Please enter your verification code.");
       return;
     }
 
@@ -60,8 +59,7 @@ export default function SecuritySettings() {
         },
         credentials: "include",
         body: JSON.stringify({
-          // In a real implementation, you'd require the current TOTP code
-          token: "TODO", // You'd need to implement this input
+          token: verificationCode,
         }),
       });
 
@@ -72,6 +70,8 @@ export default function SecuritySettings() {
       }
 
       setSuccess("Two-Factor Authentication has been disabled");
+      setShowDisablePrompt(false);
+      setVerificationCode("");
       fetchTOTPStatus();
     } catch (err: any) {
       setError(err.message || "Failed to disable TOTP");
@@ -95,7 +95,6 @@ export default function SecuritySettings() {
         },
         credentials: "include",
         body: JSON.stringify({
-          // In a real implementation, you'd require the current TOTP code
           token: "TODO", // You'd need to implement this input
         }),
       });
@@ -107,7 +106,6 @@ export default function SecuritySettings() {
       }
 
       setSuccess("Backup codes regenerated successfully");
-      // You might want to show the new backup codes to the user
       alert(
         `Your new backup codes:\n\n${data.backupCodes.join(
           "\n"
@@ -246,7 +244,7 @@ export default function SecuritySettings() {
                   Regenerate Backup Codes
                 </button>
                 <button
-                  onClick={handleDisableTOTP}
+                  onClick={() => setShowDisablePrompt(true)}
                   className="px-4 py-2 border border-red-500/30 text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
                 >
                   Disable 2FA
@@ -282,6 +280,38 @@ export default function SecuritySettings() {
           </ul>
         </div>
       </div>
+
+      {showDisablePrompt && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
+          <div className="bg-gray-800 rounded-lg p-6 border border-cyan-500/30 w-full max-w-md">
+            <h2 className="text-xl font-semibold mb-4">Disable Two-Factor Authentication</h2>
+            <p className="text-gray-400 mb-4">
+              To confirm, please enter a verification code from your authenticator app.
+            </p>
+            <input
+              type="text"
+              value={verificationCode}
+              onChange={(e) => setVerificationCode(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg mb-4"
+              placeholder="6-digit code"
+            />
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowDisablePrompt(false)}
+                className="px-4 py-2 border border-gray-600 text-gray-300 hover:bg-gray-700 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDisableTOTP}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
+              >
+                Disable
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

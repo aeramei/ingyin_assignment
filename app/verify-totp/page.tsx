@@ -1,52 +1,29 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function VerifyTOTPPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [code, setCode] = useState(["", "", "", "", "", ""]);
+  const [code, setCode] = useState(['', '', '', '', '', '']);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [useBackupCode, setUseBackupCode] = useState(false);
-  const [totpToken, setTotpToken] = useState<string | null>(null);
 
-  const redirectTo = searchParams.get("redirectTo") || "/dashboard";
-  const userId = searchParams.get("userId");
-  const urlToken = searchParams.get("totpToken");
+  const redirectTo = searchParams.get('redirectTo') || '/authenticated';
 
-  // Auto-focus first input and get TOTP token
+  // Auto-focus first input on component mount
   useEffect(() => {
-    const firstInput = document.getElementById("code-0");
+    const firstInput = document.getElementById('code-0');
     firstInput?.focus();
-
-    // Get TOTP token from multiple sources
-    let token = null;
-
-    // 1. Try URL parameter first (OAuth flow)
-    if (urlToken) {
-      token = urlToken;
-      console.log("TOTP token from URL (OAuth flow)");
-    }
-    // 2. Try localStorage (regular login flow)
-    else {
-      token = localStorage.getItem("totpToken");
-      console.log("TOTP token from localStorage (regular login)");
-    }
-
-    if (token) {
-      setTotpToken(token);
-    } else {
-      setError("TOTP session expired. Please login again.");
-    }
-  }, [urlToken]);
+  }, []);
 
   const handleCodeChange = (index: number, value: string) => {
     if (value.length > 1) {
       // Handle paste
-      const pastedCodes = value.split("").slice(0, 6);
+      const pastedCodes = value.split('').slice(0, 6);
       const newCode = [...code];
       pastedCodes.forEach((char, i) => {
         if (index + i < 6) {
@@ -57,12 +34,12 @@ export default function VerifyTOTPPage() {
 
       // Focus next empty input or submit
       const nextEmptyIndex = newCode.findIndex(
-        (c, i) => i >= index && c === ""
+        (c, i) => i >= index && c === ''
       );
       if (nextEmptyIndex !== -1) {
         document.getElementById(`code-${nextEmptyIndex}`)?.focus();
       } else {
-        document.getElementById("verify-button")?.focus();
+        document.getElementById('verify-button')?.focus();
       }
       return;
     }
@@ -79,7 +56,7 @@ export default function VerifyTOTPPage() {
   };
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === "Backspace" && !code[index] && index > 0) {
+    if (e.key === 'Backspace' && !code[index] && index > 0) {
       // Move to previous input on backspace
       document.getElementById(`code-${index - 1}`)?.focus();
     }
@@ -88,36 +65,31 @@ export default function VerifyTOTPPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!userId || !totpToken) {
-      setError("Invalid session. Please login again.");
-      return;
-    }
-
     const verificationCode = useBackupCode
-      ? code.join("")
-      : code.join("").replace(/\s/g, "");
+      ? code.join('')
+      : code.join('').replace(/\s/g, '');
 
     if (!verificationCode) {
-      setError("Please enter the verification code");
+      setError('Please enter the verification code');
       return;
     }
 
     if (!useBackupCode && verificationCode.length !== 6) {
-      setError("Please enter all 6 digits");
+      setError('Please enter all 6 digits');
       return;
     }
 
     setIsLoading(true);
-    setError("");
+    setError('');
 
     try {
-      const response = await fetch("/api/auth/verify-totp", {
-        method: "POST",
+      const response = await fetch('/api/auth/verify-totp', {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
+        credentials: 'include', // Important to send cookies
         body: JSON.stringify({
-          totpToken,
           verificationCode,
           useBackupCode,
         }),
@@ -126,28 +98,18 @@ export default function VerifyTOTPPage() {
       const data = await response.json();
 
       if (data.success) {
-        // Clear the temporary TOTP token from all sources
-        localStorage.removeItem("totpToken");
-
-        // If we came from URL token (OAuth), clear the URL parameter
-        if (urlToken) {
-          // Remove the token from URL without reloading
-          const newUrl = new URL(window.location.href);
-          newUrl.searchParams.delete("totpToken");
-          window.history.replaceState({}, "", newUrl.toString());
-        }
-
-        // Redirect to intended destination
+        // Server clears the httpOnly cookie on success.
+        // Redirect to the intended destination.
         router.push(redirectTo);
       } else {
-        setError(data.error || "Verification failed");
+        setError(data.error || 'Verification failed');
         // Clear code on error
-        setCode(["", "", "", "", "", ""]);
-        document.getElementById("code-0")?.focus();
+        setCode(['', '', '', '', '', '']);
+        document.getElementById('code-0')?.focus();
       }
     } catch (err) {
-      setError("Network error. Please try again.");
-      console.error("TOTP verification error:", err);
+      setError('Network error. Please try again.');
+      console.error('TOTP verification error:', err);
     } finally {
       setIsLoading(false);
     }
@@ -155,33 +117,21 @@ export default function VerifyTOTPPage() {
 
   const handleUseBackupCode = () => {
     setUseBackupCode(true);
-    setCode([""]); // Single input for backup code
-    setError("");
+    setCode(['']); // Single input for backup code
+    setError('');
     setTimeout(() => {
-      document.getElementById("backup-code-input")?.focus();
+      document.getElementById('backup-code-input')?.focus();
     }, 100);
   };
 
   const handleBackToTOTP = () => {
     setUseBackupCode(false);
-    setCode(["", "", "", "", "", ""]);
-    setError("");
+    setCode(['', '', '', '', '', '']);
+    setError('');
     setTimeout(() => {
-      document.getElementById("code-0")?.focus();
+      document.getElementById('code-0')?.focus();
     }, 100);
   };
-
-  // Show loading if no token yet
-  if (!totpToken && !error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading verification...</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -192,8 +142,8 @@ export default function VerifyTOTPPage() {
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
             {useBackupCode
-              ? "Enter your backup code"
-              : "Enter the 6-digit code from your authenticator app"}
+              ? 'Enter your backup code'
+              : 'Enter the 6-digit code from your authenticator app'}
           </p>
         </div>
 
@@ -264,10 +214,10 @@ export default function VerifyTOTPPage() {
             <button
               id="verify-button"
               type="submit"
-              disabled={isLoading || !totpToken}
+              disabled={isLoading}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? "Verifying..." : "Verify"}
+              {isLoading ? 'Verifying...' : 'Verify'}
             </button>
           </div>
 
@@ -275,8 +225,7 @@ export default function VerifyTOTPPage() {
             <button
               type="button"
               onClick={() => {
-                localStorage.removeItem("totpToken");
-                router.push("/signin");
+                router.push('/signin');
               }}
               className="text-sm text-gray-600 hover:text-gray-500"
             >

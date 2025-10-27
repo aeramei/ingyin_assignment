@@ -26,12 +26,23 @@ export async function POST(request: NextRequest) {
     if (!totpToken) {
       // Check if token is in cookies (for OAuth flow)
       const cookieToken = request.cookies.get("totp_temp_token")?.value;
+      log.debug("Attempted to read token from cookie", { hasCookieToken: !!cookieToken });
       if (cookieToken) {
         totpToken = cookieToken;
       }
     }
 
+    log.debug("Final TOTP token source", {
+        fromBody: !!bodyToken,
+        fromCookie: !bodyToken && !!totpToken,
+        token: redact(totpToken),
+    });
+
     if (!totpToken || !verificationCode) {
+      log.warn("Missing token or code", {
+          hasToken: !!totpToken,
+          hasCode: !!verificationCode,
+      });
       return NextResponse.json(
         { error: "TOTP token and verification code are required" },
         { status: 400 }
@@ -40,30 +51,39 @@ export async function POST(request: NextRequest) {
 
     // Verify the TOTP verification token
     const tokenPayload = await TokenService.verifyTOTPToken(totpToken);
+    log.debug("TOTP token verified", { userId: tokenPayload.userId, email: tokenPayload.email });
+
 
     let isValid = false;
 
     if (useBackupCode) {
+      log.debug("Verifying backup code...");
       // Verify backup code
       isValid = await TOTPAuth.verifyBackupCode(
         tokenPayload.userId,
         verificationCode
       );
+      log.debug("Backup code verification result", { isValid });
     } else {
+      log.debug("Verifying TOTP code...");
       // Verify TOTP code
       const result = await TOTPAuth.verifyTOTP(
         tokenPayload.userId,
         verificationCode
       );
       isValid = result.success;
+      log.debug("TOTP code verification result", { isValid, delta: result.delta });
     }
 
     if (!isValid) {
+      log.warn("Invalid verification code", { userId: tokenPayload.userId });
       return NextResponse.json(
         { error: "Invalid verification code" },
         { status: 400 }
       );
     }
+
+    log.info("Verification code is valid", { userId: tokenPayload.userId });
 
     // Get user data
     const user = await prisma.user.findUnique({
@@ -80,8 +100,11 @@ export async function POST(request: NextRequest) {
     });
 
     if (!user) {
+      log.error("User not found after successful TOTP verification", { userId: tokenPayload.userId });
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+
+    log.debug("User found, generating final tokens...");
 
     // Generate FINAL access token with TOTP verified
     const finalAccessToken = await TokenService.generateAccessToken(
@@ -104,6 +127,8 @@ export async function POST(request: NextRequest) {
       isTOTPEnabled: user.isTOTPEnabled,
     });
 
+    log.debug("Final tokens generated");
+
     // Create session
     await prisma.session.create({
       data: {
@@ -112,6 +137,7 @@ export async function POST(request: NextRequest) {
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       },
     });
+    log.debug("Session created");
 
     // Audit log
     await prisma.auditLog.create({
@@ -127,6 +153,7 @@ export async function POST(request: NextRequest) {
         },
       },
     });
+    log.debug("Audit log created");
 
     // Prepare response
     const response = NextResponse.json({
@@ -172,9 +199,10 @@ export async function POST(request: NextRequest) {
       path: "/",
     });
 
+    log.info("Successfully verified TOTP and returning response");
     return response;
   } catch (error) {
-    console.error("TOTP verification error:", error);
+    log.error("TOTP verification error", { error: error instanceof Error ? error.message : String(error) });
 
     if (error instanceof Error && error.message.includes("expired")) {
       return NextResponse.json(

@@ -1,157 +1,110 @@
-// app/api/auth/verify-otp/route.ts
-import { NextResponse } from "next/server";
-import { verifyOTP } from "@/lib/otp";
-import {
-  createUser,
-  findUserByEmail,
-  generateAccessToken,
-  generateRefreshToken,
-} from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server";
+import { TokenService } from "@/lib/jwt";
 import { PrismaClient } from "@/app/generated/prisma";
 import { createRequestLogger } from "@/lib/logger";
+import { verifyOTP } from "@/lib/otp";
 
 const prisma = new PrismaClient();
 
-export async function POST(request: Request) {
-  const log = createRequestLogger("verify-otp");
-  const start = Date.now();
+export async function POST(request: NextRequest) {
+  const log = createRequestLogger("auth/verify-otp");
   try {
-    const { email, otp, name } = await request.json();
+    const { verificationCode } = await request.json();
+    log.debug("Incoming verify-otp payload", {
+      codeLength: verificationCode ? String(verificationCode).length : 0,
+    });
 
-    // Validate input
-    if (!email || !otp) {
-      log.warn("Missing email or otp in payload");
+    const cookieToken = request.cookies.get("otp_temp_token")?.value;
+    if (!cookieToken) {
+      log.warn("Missing OTP temp token cookie");
       return NextResponse.json(
-        { error: "Email and OTP are required" },
+        { error: "Verification session not found. Please log in again." },
         { status: 400 }
       );
     }
 
-    if (otp.length !== 6) {
-      log.warn("OTP not 6 digits");
+    if (!verificationCode) {
       return NextResponse.json(
-        { error: "OTP must be 6 digits" },
+        { error: "Verification code is required" },
         { status: 400 }
       );
     }
 
-    // Verify OTP
-    const isValid = await verifyOTP(email, otp);
-    log.debug("OTP verification result", { isValid });
+    const tokenPayload = await TokenService.verifyTOTPToken(cookieToken);
+    log.debug("OTP token verified", { userId: tokenPayload.userId });
+
+    const isValid = await verifyOTP(
+      tokenPayload.userId,
+      verificationCode,
+      "EMAIL_VERIFICATION"
+    );
 
     if (!isValid) {
+      log.warn("Invalid OTP code", { userId: tokenPayload.userId });
       return NextResponse.json(
-        { error: "Invalid or expired OTP" },
+        { error: "Invalid verification code" },
         { status: 400 }
       );
     }
 
-    // OTP is valid - proceed with user registration/login
-    let isNewUser = false;
-    let user = await findUserByEmail(email);
-    log.debug("User lookup", { exists: Boolean(user) });
+    log.info("OTP code is valid", { userId: tokenPayload.userId });
+
+    const user = await prisma.user.findUnique({
+      where: { id: tokenPayload.userId },
+      select: { id: true, email: true, name: true, role: true, isTOTPEnabled: true },
+    });
 
     if (!user) {
-      // New user - create account
-      if (!name) {
-        log.warn("Name missing for first-time registration");
-        return NextResponse.json(
-          { error: "Name is required for registration" },
-          { status: 400 }
-        );
-      }
-      user = await createUser({ email, name });
-      isNewUser = true;
-      log.info("Created user via OTP verification", { userId: user.id });
+      log.error("User not found after OTP verification", { userId: tokenPayload.userId });
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // If user has 2FA enabled, this endpoint should not complete login (out of scope now)
-    if (user.isTOTPEnabled) {
-      log.warn("TOTP-enabled account attempted OTP email flow", { userId: user.id });
-      return NextResponse.json(
-        { error: "Two-factor authentication is enabled. Use 2FA flow." },
-        { status: 400 }
-      );
-    }
+    const accessToken = await TokenService.generateAccessToken({ ...user });
+    const refreshToken = await TokenService.generateRefreshToken({ ...user });
 
-    // Generate tokens
-    const tokenPayload = {
-      userId: user.id,
-      username: user.email,
-      email: user.email,
-      name: user.name ?? undefined,
-      role: user.role,
-      isTOTPEnabled: user.isTOTPEnabled,
-      otpRequired: false,
-      otpVerified: true,
-    } as const;
-
-    const accessToken = await generateAccessToken(tokenPayload as any);
-    const refreshToken = await generateRefreshToken(tokenPayload as any);
-    log.debug("Tokens generated");
-
-    // Persist a session tied to the refresh token
     await prisma.session.create({
-      data: {
-        userId: user.id,
-        token: refreshToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      },
+        data: {
+            userId: user.id,
+            token: refreshToken,
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        },
     });
-    log.debug("Refresh session persisted", { userId: user.id });
 
-    // Audit log
     await prisma.auditLog.create({
-      data: {
-        userId: user.id,
-        action: isNewUser ? "REGISTER_WITH_OTP" : "LOGIN_WITH_OTP",
-        ipAddress: (request.headers as any).get?.("x-forwarded-for") || "unknown",
-        userAgent: (request.headers as any).get?.("user-agent") || "unknown",
-        details: isNewUser ? { method: "OTP_VERIFICATION" } : { method: "OTP_LOGIN" },
-      },
+        data: {
+            userId: user.id,
+            action: "LOGIN_OTP_VERIFIED",
+            ipAddress: request.headers.get("x-forwarded-for") || "unknown",
+            userAgent: request.headers.get("user-agent") || "unknown",
+        },
     });
 
-    // Create response
-    const response = NextResponse.json({
-      success: true,
-      message: isNewUser ? "Registration successful" : "Login successful",
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      },
-    });
+    const response = NextResponse.json({ success: true, ...user });
 
-    // Set HTTP-only cookies, aligned with register route
     response.cookies.set("accessToken", accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 15 * 60,
+      sameSite: "lax",
+      maxAge: 15 * 60, // 15 minutes
+      path: "/",
     });
 
     response.cookies.set("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60, // 7 days
+        path: "/",
     });
 
-    // Also clear any legacy auth-token cookie
-    response.cookies.delete("auth-token");
+    response.cookies.delete("otp_temp_token");
 
-    log.info("OTP verification completed; cookies set and response prepared", { userId: user.id, isNewUser });
     return response;
   } catch (error) {
-    console.error("Error verifying OTP:", error);
+    log.error("OTP verification error", { error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json(
-      { error: "Failed to verify OTP" },
+      { error: "OTP verification failed" },
       { status: 500 }
     );
-  } finally {
-    const ms = Date.now() - start;
-    log.debug("verify-otp finished", { durationMs: ms });
-    await prisma.$disconnect();
   }
 }
