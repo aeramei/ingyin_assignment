@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import { PrismaClient } from "@prisma/client";
+import { authOptions } from "@/lib/auth-options";
+import { verifyAccessToken } from "@/lib/auth";
+import { PrismaClient } from "@/app/generated/prisma";
 import { authenticator } from "otplib";
+import { createRequestLogger } from "@/lib/logger";
 
 const prisma = new PrismaClient();
 
@@ -85,9 +87,31 @@ function verifyBackupCode(backupCodes: string[], code: string): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  const log = createRequestLogger("2fa/disable");
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
+    let email = session?.user?.email ?? null;
+
+    // Fallback 1: JWT cookies (accessToken or auth-token)
+    if (!email) {
+      const accessToken =
+        request.cookies.get("accessToken")?.value ||
+        request.cookies.get("auth-token")?.value;
+      if (accessToken) {
+        try {
+          const payload = await verifyAccessToken(accessToken);
+          email = (payload as any)?.email ?? null;
+        } catch (_) {}
+      }
+    }
+
+    // Fallback 2: Middleware header
+    if (!email) {
+      const headerEmail = request.headers.get("x-user-email");
+      if (headerEmail) email = headerEmail;
+    }
+
+    if (!email) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -103,7 +127,7 @@ export async function POST(request: NextRequest) {
 
     // Rate limiting
     const ip = request.headers.get("x-forwarded-for") || "unknown";
-    const rateLimitKey = `disable_2fa_${session.user.email}_${ip}`;
+    const rateLimitKey = `disable_2fa_${email}_${ip}`;
 
     if (!checkRateLimit(rateLimitKey, 5, 60000)) {
       // 5 attempts per minute
@@ -114,7 +138,7 @@ export async function POST(request: NextRequest) {
     }
 
     const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
+      where: { email: email.toLowerCase() },
       select: {
         id: true,
         email: true,

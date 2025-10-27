@@ -1,21 +1,48 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-options";
+import { verifyAccessToken } from "@/lib/auth";
 import { TOTPService } from "@/lib/totp-service";
 import { EncryptionService } from "@/lib/encryption";
 import { PrismaClient } from "@/app/generated/prisma";
+import { createRequestLogger, redact } from "@/lib/logger";
 
 const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
+  const log = createRequestLogger("2fa/verify");
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
+    let email = session?.user?.email ?? null;
+
+    if (!email) {
+      const accessToken =
+        request.cookies.get("accessToken")?.value ||
+        request.cookies.get("auth-token")?.value;
+      if (accessToken) {
+        try {
+          const payload = await verifyAccessToken(accessToken);
+          email = (payload as any)?.email ?? null;
+        } catch (_) {}
+      }
+    }
+
+    if (!email) {
+      const headerEmail = request.headers.get("x-user-email");
+      if (headerEmail) email = headerEmail;
+    }
+
+    if (!email) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { token, encryptedSecret, encryptedBackupCodes } =
-      await request.json();
+    const { token, encryptedSecret, encryptedBackupCodes } = await request.json();
+
+    log.debug("Incoming verify payload", {
+      tokenLen: token ? String(token).length : 0,
+      hasEncryptedSecret: !!encryptedSecret,
+      backupCodesCount: Array.isArray(encryptedBackupCodes) ? encryptedBackupCodes.length : 0,
+    });
 
     if (!token || !encryptedSecret) {
       return NextResponse.json(
@@ -25,19 +52,33 @@ export async function POST(request: NextRequest) {
     }
 
     const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
+      where: { email: email.toLowerCase() },
     });
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const secret = EncryptionService.decrypt(
-      encryptedSecret,
-      process.env.TOTP_SECRET_ENCRYPTION_KEY!
-    );
+    let secret: string;
+    try {
+      secret = EncryptionService.decrypt(
+        encryptedSecret,
+        process.env.TOTP_SECRET_ENCRYPTION_KEY!
+      );
+      log.debug("Decrypted temp secret successfully", { preview: redact(secret, 3, 3), len: secret.length });
+    } catch (e: any) {
+      log.warn("Failed to decrypt temp secret. Likely stale/legacy temp data; prompt re-setup.", { reason: String(e?.message || e) });
+      return NextResponse.json(
+        {
+          error: "Your 2FA setup session expired or is invalid. Please restart the setup and try again.",
+          code: "RETRY_SETUP",
+        },
+        { status: 400 }
+      );
+    }
 
     const isValid = TOTPService.verifyToken(token, secret);
+    log.debug("TOTP verification result", { result: isValid });
 
     if (!isValid) {
       return NextResponse.json(
@@ -51,15 +92,21 @@ export async function POST(request: NextRequest) {
       process.env.TOTP_SECRET_ENCRYPTION_KEY!
     );
 
-    const finalEncryptedBackupCodes = encryptedBackupCodes.map((code: string) =>
-      EncryptionService.encrypt(
-        EncryptionService.decrypt(
-          code,
+    let finalEncryptedBackupCodes: string[] = [];
+    try {
+      finalEncryptedBackupCodes = (encryptedBackupCodes || []).map((code: string) =>
+        EncryptionService.encrypt(
+          EncryptionService.decrypt(
+            code,
+            process.env.BACKUP_CODES_ENCRYPTION_KEY!
+          ),
           process.env.BACKUP_CODES_ENCRYPTION_KEY!
-        ),
-        process.env.BACKUP_CODES_ENCRYPTION_KEY!
-      )
-    );
+        )
+      );
+    } catch (e: any) {
+      log.warn("Failed to process backup codes; proceeding without them", { reason: String(e?.message || e) });
+      finalEncryptedBackupCodes = [];
+    }
 
     await prisma.user.update({
       where: { id: user.id },

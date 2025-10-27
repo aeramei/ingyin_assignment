@@ -3,6 +3,7 @@ import { authenticator } from "otplib";
 import QRCode from "qrcode";
 import { EncryptionService } from "./encryption";
 import { TOTP_CONFIG } from "./totp-config";
+import { createRequestLogger, redact } from "./logger";
 
 // Configure authenticator
 authenticator.options = {
@@ -11,22 +12,51 @@ authenticator.options = {
   digits: TOTP_CONFIG.digits,
 };
 
+function isBase32Secret(secret: string): boolean {
+  // RFC 4648 Base32 alphabet without padding
+  return /^[A-Z2-7]+=*$/i.test(secret.replace(/\s+/g, ""));
+}
+
 export class TOTPService {
   static generateSecret(): string {
-    return EncryptionService.generateTOTPSecret();
+    const log = createRequestLogger("totp-service/generateSecret");
+    // Use otplib to generate a Base32 secret (preferred by authenticators)
+    const secret = authenticator.generateSecret(TOTP_CONFIG.secretLength);
+    const base32 = isBase32Secret(secret);
+    log.info("Generated TOTP secret", {
+      length: secret.length,
+      looksBase32: base32,
+      preview: redact(secret, 4, 4),
+    });
+    if (!base32) {
+      log.warn("Secret may not be Base32 — many authenticators require Base32. Ensure generator matches authenticator expectations.");
+    }
+    return secret;
   }
 
   static async generateQRCode(secret: string, email: string): Promise<string> {
+    const log = createRequestLogger("totp-service/generateQRCode");
     try {
-      const otpauth = authenticator.keyuri(email, TOTP_CONFIG.issuer, secret);
-      console.log("Generating QR code for:", email);
+      const label = email;
+      const issuer = TOTP_CONFIG.issuer;
+      const otpauth = authenticator.keyuri(label, issuer, secret);
+      log.debug("Built otpauth URI", {
+        label,
+        issuer,
+        uriPreview: otpauth.slice(0, 40) + "...",
+        secretPreview: redact(secret, 4, 4),
+        digits: TOTP_CONFIG.digits,
+        period: TOTP_CONFIG.period,
+        window: TOTP_CONFIG.window,
+      });
 
+      log.info("Generating QR code", { for: label });
       const qrCode = await QRCode.toDataURL(otpauth);
-      console.log("QR Code generated successfully");
+      log.info("QR Code generated successfully", { size: qrCode.length });
 
       return qrCode;
-    } catch (error) {
-      console.error("QR Code generation failed:", error);
+    } catch (error: any) {
+      log.error("QR Code generation failed", { error: String(error?.message || error) });
       // Fallback: Create a simple SVG QR code
       return this.createFallbackQRCode(secret);
     }
@@ -55,19 +85,29 @@ export class TOTPService {
   }
 
   static verifyToken(token: string, secret: string): boolean {
+    const log = createRequestLogger("totp-service/verifyToken");
     try {
-      return authenticator.verify({ token, secret });
-    } catch (error) {
-      console.error("Token verification error:", error);
+      const cleanToken = token.replace(/\s+/g, "");
+      const result = authenticator.verify({ token: cleanToken, secret });
+      log.debug("TOTP verification attempted", {
+        tokenLength: cleanToken.length,
+        secretPreview: redact(secret, 4, 4),
+        result,
+      });
+      return result;
+    } catch (error: any) {
+      log.error("Token verification error", { error: String(error?.message || error) });
       return false;
     }
   }
 
   static generateBackupCodes(): string[] {
+    const log = createRequestLogger("totp-service/generateBackupCodes");
     const codes: string[] = [];
     for (let i = 0; i < TOTP_CONFIG.backupCodeCount; i++) {
       codes.push(EncryptionService.generateBackupCode());
     }
+    log.info("Generated backup codes", { count: codes.length });
     return codes;
   }
 }

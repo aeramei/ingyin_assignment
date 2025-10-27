@@ -2,16 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { TokenService } from "@/lib/jwt";
 import { TOTPAuth } from "@/lib/totp-auth";
 import { PrismaClient } from "@/app/generated/prisma";
+import { createRequestLogger, redact } from "@/lib/logger";
 
 const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
+  const log = createRequestLogger("auth/verify-totp");
   try {
     const {
       totpToken: bodyToken,
       verificationCode,
       useBackupCode = false,
     } = await request.json();
+    log.debug("Incoming verify-totp payload", {
+      hasBodyToken: !!bodyToken,
+      codeLength: verificationCode ? String(verificationCode).length : 0,
+      useBackupCode,
+    });
 
     // Try to get token from body first, then from cookies
     let totpToken = bodyToken;
@@ -85,8 +92,7 @@ export async function POST(request: NextRequest) {
         name: user.name || undefined,
         role: user.role,
         isTOTPEnabled: user.isTOTPEnabled,
-      },
-      true // totpVerified = true
+      }
     );
 
     const refreshToken = await TokenService.generateRefreshToken({
