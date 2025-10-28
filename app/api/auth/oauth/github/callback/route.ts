@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeGitHubCodeForToken, getGitHubUserProfile, githubOAuthConfig } from "@/lib/oauth";
+import {
+  exchangeGitHubCodeForToken,
+  getGitHubUserProfile,
+  githubOAuthConfig,
+} from "@/lib/oauth";
 import { PrismaClient } from "@/app/generated/prisma";
 import { generateOTP, storeOTP } from "@/lib/otp";
 import { sendOTPEmail } from "@/lib/gmail";
@@ -38,7 +42,10 @@ export async function GET(request: NextRequest) {
     // Validate state parameter
     const storedState = request.cookies.get("oauth_state")?.value;
     if (!state || state !== storedState) {
-      log.warn("Invalid state parameter", { state: state ? state.slice(0, 6) + "***" : null, stored: storedState ? storedState.slice(0,6)+"***" : null });
+      log.warn("Invalid state parameter", {
+        state: state ? state.slice(0, 6) + "***" : null,
+        stored: storedState ? storedState.slice(0, 6) + "***" : null,
+      });
       return NextResponse.redirect(
         new URL("/signin?error=invalid_state", request.url)
       );
@@ -57,7 +64,10 @@ export async function GET(request: NextRequest) {
 
     // Get user profile from GitHub
     const userProfile = await getGitHubUserProfile(accessToken);
-    log.info("Provider profile fetched", { emailDomain: (userProfile.email || "").split("@")[1] || null, idPrefix: userProfile.id?.slice(0,6) });
+    log.info("Provider profile fetched", {
+      emailDomain: (userProfile.email || "").split("@")[1] || null,
+      idPrefix: userProfile.id?.slice(0, 6),
+    });
 
     // Check if user already exists
     let user = await prisma.user.findUnique({
@@ -101,24 +111,20 @@ export async function GET(request: NextRequest) {
     const sent = await sendOTPEmail(user.email, otp, user.name || "User");
     if (!sent) {
       log.error("Failed to send OTP email");
-      return NextResponse.redirect(new URL("/signin?error=send_failed", request.url));
+      return NextResponse.redirect(
+        new URL("/signin?error=send_failed", request.url)
+      );
     }
     log.info("OTP email sent");
 
-    // Issue short-lived pre-auth access token: requires OTP
-    const preAuthPayload = {
-      userId: user.id,
-      username: user.email,
-      email: user.email,
-      name: user.name || undefined,
-      role: user.role,
-      isTOTPEnabled: user.isTOTPEnabled,
-      otpRequired: true,
-      otpVerified: false,
-    } as const;
-
-    const preAuthAccessToken = await TokenService.generateAccessToken(preAuthPayload as any);
-    log.debug("Pre-auth access token minted");
+    // ✅ FIX: Generate the same OTP token that the login route uses
+    const otpToken = await TokenService.generateTOTPVerificationToken(
+      user.id,
+      user.email,
+      user.email,
+      user.role,
+      user.name || undefined
+    );
 
     // Audit log (OTP sent for OAuth login)
     await prisma.auditLog.create({
@@ -127,7 +133,12 @@ export async function GET(request: NextRequest) {
         action: "LOGIN_OTP_SENT",
         ipAddress: request.headers.get("x-forwarded-for") || "unknown",
         userAgent: request.headers.get("user-agent") || "unknown",
-        details: { provider: "github", ttlMinutes: 10 },
+        details: {
+          provider: "github",
+          ttlMinutes: 10,
+          loginMethod: "oauth_github",
+          verificationType: "email_otp",
+        },
       },
     });
     log.debug("Audit log recorded");
@@ -138,11 +149,25 @@ export async function GET(request: NextRequest) {
     if (user.name) verifyUrl.searchParams.set("name", user.name);
 
     const response = NextResponse.redirect(verifyUrl);
-    setPreAuthAccessCookie(response, preAuthAccessToken);
+
+    // ✅ FIX: Set the same cookie that verify-otp route expects
+    response.cookies.set("otp_temp_token", otpToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 10 * 60, // 10 minutes
+      path: "/",
+    });
+
+    // Clear other cookies
     clearNextAuthCookies(response);
     response.cookies.delete("oauth_state");
 
-    log.info("Redirecting to verify-otp", { path: verifyUrl.pathname, query: verifyUrl.search });
+    log.info("Redirecting to verify-otp", {
+      path: verifyUrl.pathname,
+      query: verifyUrl.search,
+      otpTokenSet: true,
+    });
     return response;
   } catch (error) {
     const logErr = String(error);
