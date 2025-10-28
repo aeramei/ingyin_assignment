@@ -1,3 +1,4 @@
+// app/api/auth/verify-otp/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { TokenService } from "@/lib/jwt";
 import { PrismaClient } from "@/app/generated/prisma";
@@ -31,30 +32,49 @@ export async function POST(request: NextRequest) {
     }
 
     const tokenPayload = await TokenService.verifyTOTPToken(cookieToken);
-    log.debug("OTP token verified", { userId: tokenPayload.userId });
+    log.debug("OTP token verified", {
+      userId: tokenPayload.userId,
+      email: tokenPayload.email,
+    });
 
+    // ✅ FIX: Use email instead of userId for OTP verification
     const isValid = await verifyOTP(
-      tokenPayload.userId,
+      tokenPayload.email, // Changed from userId to email
       verificationCode
     );
 
     if (!isValid) {
-      log.warn("Invalid OTP code", { userId: tokenPayload.userId });
+      log.warn("Invalid OTP code", {
+        userId: tokenPayload.userId,
+        email: tokenPayload.email,
+        providedCode: verificationCode,
+      });
       return NextResponse.json(
         { error: "Invalid verification code" },
         { status: 400 }
       );
     }
 
-    log.info("OTP code is valid", { userId: tokenPayload.userId });
+    log.info("OTP code is valid", {
+      userId: tokenPayload.userId,
+      email: tokenPayload.email,
+    });
 
     const user = await prisma.user.findUnique({
       where: { id: tokenPayload.userId },
-      select: { id: true, email: true, name: true, role: true, isTOTPEnabled: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        isTOTPEnabled: true,
+      },
     });
 
     if (!user) {
-      log.error("User not found after OTP verification", { userId: tokenPayload.userId });
+      log.error("User not found after OTP verification", {
+        userId: tokenPayload.userId,
+      });
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
@@ -62,23 +82,36 @@ export async function POST(request: NextRequest) {
     const refreshToken = await TokenService.generateRefreshToken({ ...user });
 
     await prisma.session.create({
-        data: {
-            userId: user.id,
-            token: refreshToken,
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        },
+      data: {
+        userId: user.id,
+        token: refreshToken,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
     });
 
     await prisma.auditLog.create({
-        data: {
-            userId: user.id,
-            action: "LOGIN_OTP_VERIFIED",
-            ipAddress: request.headers.get("x-forwarded-for") || "unknown",
-            userAgent: request.headers.get("user-agent") || "unknown",
+      data: {
+        userId: user.id,
+        action: "LOGIN_OTP_VERIFIED",
+        ipAddress: request.headers.get("x-forwarded-for") || "unknown",
+        userAgent: request.headers.get("user-agent") || "unknown",
+        details: {
+          email: user.email,
+          verificationMethod: "email_otp",
         },
+      },
     });
 
-    const response = NextResponse.json({ success: true, ...user });
+    const response = NextResponse.json({
+      success: true,
+      message: "Login successful",
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+    });
 
     response.cookies.set("accessToken", accessToken, {
       httpOnly: true,
@@ -89,18 +122,20 @@ export async function POST(request: NextRequest) {
     });
 
     response.cookies.set("refreshToken", refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60, // 7 days
-        path: "/",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+      path: "/",
     });
 
     response.cookies.delete("otp_temp_token");
 
     return response;
   } catch (error) {
-    log.error("OTP verification error", { error: error instanceof Error ? error.message : String(error) });
+    log.error("OTP verification error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       { error: "OTP verification failed" },
       { status: 500 }

@@ -197,9 +197,21 @@ export default function Login() {
         throw new Error(data.error || "Sign in failed");
       }
 
-      // If the account has TOTP enabled, require authenticator verification step
+      console.log("Login API response:", data); // Debug log
+
+      // Handle different verification requirements
+      if (data.requiresOTP) {
+        // Email OTP verification required (TOTP not enabled)
+        console.log(
+          "Email OTP verification required - redirecting to /verify-otp"
+        );
+        window.location.href = "/verify-otp";
+        return;
+      }
+
       if (data.requiresTOTP) {
-        // A short‑lived cookie `totp_temp_token` was set by the server; redirect to verification page
+        // TOTP verification required (TOTP enabled)
+        console.log("TOTP verification required - redirecting to /verify-totp");
         window.location.href = "/verify-totp";
         return;
       }
