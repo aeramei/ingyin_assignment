@@ -78,15 +78,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const accessToken = await TokenService.generateAccessToken({ ...user });
-    const refreshToken = await TokenService.generateRefreshToken({ ...user });
+    const { token: accessToken, expiresAt: accessTokenExpiresAt } = await TokenService.generateAccessToken({ ...user });
+    const { token: refreshToken, expiresAt: refreshTokenExpiresAt } = await TokenService.generateRefreshToken({ ...user });
 
-    await prisma.session.create({
-      data: {
-        userId: user.id,
-        token: refreshToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      },
+    await prisma.token.create({
+        data: {
+            userId: user.id,
+            token: accessToken,
+            expiresAt: accessTokenExpiresAt,
+        },
+    });
+
+    await prisma.refreshToken.create({
+        data: {
+            userId: user.id,
+            token: refreshToken,
+            expiresAt: refreshTokenExpiresAt,
+        },
     });
 
     await prisma.auditLog.create({

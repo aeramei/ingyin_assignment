@@ -10,12 +10,21 @@ export default function VerifyOTPPage() {
   const [code, setCode] = useState(new Array(6).fill(''));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendError, setResendError] = useState('');
 
   const redirectTo = searchParams.get('redirectTo') || '/authenticated';
 
   useEffect(() => {
     document.getElementById('code-0')?.focus();
   }, []);
+
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
 
   const handleCodeChange = (index: number, value: string) => {
     if (value.length > 1) {
@@ -76,6 +85,29 @@ export default function VerifyOTPPage() {
     }
   };
 
+  const handleResendOTP = async () => {
+    if (resendCooldown > 0) return;
+
+    setResendError('');
+    try {
+      const response = await fetch('/api/auth/login/request-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setResendCooldown(60);
+      } else {
+        setResendError(data.error || 'Failed to resend OTP');
+      }
+    } catch (err) {
+      setResendError('A network error occurred. Please try again.');
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="max-w-md w-full space-y-8 p-8 bg-white shadow-lg rounded-lg">
@@ -112,6 +144,17 @@ export default function VerifyOTPPage() {
             {isLoading ? 'Verifying...' : 'Verify'}
           </button>
         </form>
+
+        <div className="text-center">
+          <button
+            onClick={handleResendOTP}
+            disabled={resendCooldown > 0}
+            className="text-sm text-blue-600 hover:underline disabled:text-gray-500 disabled:cursor-not-allowed"
+          >
+            {resendCooldown > 0 ? `Resend OTP in ${resendCooldown}s` : 'Resend OTP'}
+          </button>
+          {resendError && <p className="text-red-500 text-center text-sm mt-2">{resendError}</p>}
+        </div>
       </div>
     </div>
   );

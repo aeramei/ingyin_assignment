@@ -1,29 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { verifyAccessToken } from "@/lib/auth";
+import { TokenService } from "@/lib/jwt";
 
 export async function POST(request: NextRequest) {
   try {
-    const accessToken = request.cookies.get("accessToken")?.value;
-    const refreshToken = request.cookies.get("refreshToken")?.value;
+    const refreshTokenCookie = request.cookies.get("refreshToken")?.value;
 
-    if (refreshToken) {
+    if (refreshTokenCookie) {
       try {
-        // Only try to verify if we have an access token
-        if (accessToken) {
-          const payload = await verifyAccessToken(accessToken);
+        // We don't need to verify the token to get the user ID, just decode it.
+        const decoded = TokenService.decodeToken(refreshTokenCookie);
+        const userId = decoded?.userId;
 
-          // Delete session
-          await prisma.session.deleteMany({
+        // Delete the refresh token from the database
+        await prisma.refreshToken.deleteMany({
+          where: {
+            token: refreshTokenCookie,
+          },
+        });
+
+        if (userId) {
+          // Invalidate all access tokens for the user as well for added security
+          await prisma.token.deleteMany({
             where: {
-              token: refreshToken,
+              userId: userId,
             },
           });
 
           // Create audit log
           await prisma.auditLog.create({
             data: {
-              userId: payload.userId,
+              userId: userId,
               action: "LOGOUT",
               ipAddress: request.headers.get("x-forwarded-for") || "unknown",
               userAgent: request.headers.get("user-agent") || "unknown",
@@ -31,8 +38,8 @@ export async function POST(request: NextRequest) {
           });
         }
       } catch (error) {
-        // Token might be expired, but we still want to clear cookies
-        console.log("Token expired during logout, clearing cookies");
+        // Even if there's an error, we proceed to clear cookies
+        console.error("Error during token invalidation on logout:", error);
       }
     }
 
@@ -41,9 +48,10 @@ export async function POST(request: NextRequest) {
       message: "Logged out successfully",
     });
 
-    // Clear cookies
+    // Clear all relevant auth cookies
     response.cookies.delete("accessToken");
     response.cookies.delete("refreshToken");
+    response.cookies.delete("otp_temp_token"); // Also clear any pending OTP tokens
 
     return response;
   } catch (error) {

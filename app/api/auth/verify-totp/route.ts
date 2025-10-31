@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
     log.debug("User found, generating final tokens...");
 
     // Generate FINAL access token with TOTP verified
-    const finalAccessToken = await TokenService.generateAccessToken(
+    const { token: finalAccessToken, expiresAt: accessTokenExpiresAt } = await TokenService.generateAccessToken(
       {
         userId: user.id,
         email: user.email,
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    const refreshToken = await TokenService.generateRefreshToken({
+    const { token: refreshToken, expiresAt: refreshTokenExpiresAt } = await TokenService.generateRefreshToken({
       userId: user.id,
       email: user.email,
       username: user.email,
@@ -129,15 +129,23 @@ export async function POST(request: NextRequest) {
 
     log.debug("Final tokens generated");
 
-    // Create session
-    await prisma.session.create({
+    // Create token entries in DB
+    await prisma.token.create({
       data: {
         userId: user.id,
-        token: refreshToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        token: finalAccessToken,
+        expiresAt: accessTokenExpiresAt,
       },
     });
-    log.debug("Session created");
+
+    await prisma.refreshToken.create({
+        data: {
+            userId: user.id,
+            token: refreshToken,
+            expiresAt: refreshTokenExpiresAt,
+        },
+    });
+    log.debug("Tokens saved to DB");
 
     // Audit log
     await prisma.auditLog.create({

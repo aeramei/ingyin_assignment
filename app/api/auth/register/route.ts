@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyOTP } from "@/lib/otp";
-import {
-  hashPassword,
-  generateAccessToken,
-  generateRefreshToken,
-} from "@/lib/auth";
+import { hashPassword } from "@/lib/auth";
+import { TokenService } from "@/lib/jwt";
 import {
   validatePassword,
   defaultRequirements,
@@ -139,19 +136,26 @@ export async function POST(request: NextRequest) {
       otpVerified: true,
     } as const;
 
-    const accessToken = await generateAccessToken(tokenPayload as any);
-    const refreshToken = await generateRefreshToken(tokenPayload as any);
+    const { token: accessToken, expiresAt: accessTokenExpiresAt } = await TokenService.generateAccessToken(tokenPayload as any);
+    const { token: refreshToken, expiresAt: refreshTokenExpiresAt } = await TokenService.generateRefreshToken(tokenPayload as any);
     console.log("Tokens generated");
 
     // Create session
-    await prisma.session.create({
+    await prisma.token.create({
       data: {
         userId: user.id,
-        token: refreshToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        token: accessToken,
+        expiresAt: accessTokenExpiresAt,
       },
     });
-    console.log("Session created");
+    await prisma.refreshToken.create({
+        data: {
+            userId: user.id,
+            token: refreshToken,
+            expiresAt: refreshTokenExpiresAt,
+        },
+    });
+    console.log("Tokens saved to DB");
 
     // Create audit log
     await prisma.auditLog.create({

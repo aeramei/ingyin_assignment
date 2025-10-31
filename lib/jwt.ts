@@ -39,7 +39,7 @@ export class TokenService {
   // Generate access token (short-lived)
   static async generateAccessToken(
     payload: Omit<TokenPayload, "iss" | "exp" | "iat" | "totpVerified">
-  ): Promise<string> {
+  ): Promise<{ token: string; expiresAt: Date }> {
     const claims: Record<string, any> = {
       ...payload,
       name: payload.name ?? "",
@@ -62,13 +62,17 @@ export class TokenService {
       .setIssuedAt()
       .setExpirationTime(this.ACCESS_EXPIRATION)
       .sign(this.getKey());
-    return token;
+
+    const decoded = decodeJwt(token);
+    const expiresAt = new Date((decoded.exp as number) * 1000);
+
+    return { token, expiresAt };
   }
 
   // Generate refresh token (long-lived)
   static async generateRefreshToken(
     payload: Omit<TokenPayload, "iss" | "exp" | "iat" | "totpVerified">
-  ): Promise<string> {
+  ): Promise<{ token: string; expiresAt: Date }> {
     const claims = {
       ...payload,
       name: payload.name ?? "",
@@ -81,7 +85,11 @@ export class TokenService {
       .setIssuedAt()
       .setExpirationTime(this.REFRESH_EXPIRATION)
       .sign(this.getKey());
-    return token;
+
+    const decoded = decodeJwt(token);
+    const expiresAt = new Date((decoded.exp as number) * 1000);
+
+    return { token, expiresAt };
   }
 
   // Generate TOTP verification token (for the intermediate step)

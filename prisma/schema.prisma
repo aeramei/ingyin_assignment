@@ -36,14 +36,14 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  sessions      Session[]
+  tokens        Token[]
   auditLogs     AuditLog[]
   refreshTokens RefreshToken[]
 
   @@map("users")
 }
 
-model Session {
+model Token {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -51,7 +51,7 @@ model Session {
   expiresAt DateTime
   createdAt DateTime @default(now())
 
-  @@map("sessions")
+  @@map("tokens")
 }
 
 model RefreshToken {
@@ -76,13 +76,6 @@ model AuditLog {
   user      User     @relation(fields: [userId], references: [id])
 
   @@map("audit_logs")
-}
-
-model Token {
-  tokenId   String   @id @default(uuid())
-  createdAt DateTime @default(now())
-  hash      String
-  valid     Boolean  @default(true)
 }
 
 enum UserRole {

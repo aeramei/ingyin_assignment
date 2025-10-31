@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
         } else {
             // User does not have 2FA, so we use email OTP.
             const otp = generateOTP();
-            await storeOTP(user.id, otp);
+            await storeOTP(user.email, otp);
             await sendOTPEmail(user.email, otp, "Password Reset");
 
             const token = await TokenService.generateTOTPVerificationToken(user.id, user.email, user.email, "USER");

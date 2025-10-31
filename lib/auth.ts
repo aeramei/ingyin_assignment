@@ -24,13 +24,13 @@ export async function verifyPassword(
 // JWT token helpers (re-exported for convenience)
 export async function generateAccessToken(
   payload: Omit<TokenPayload, "iss" | "exp" | "iat" | "totpVerified">
-): Promise<string> {
+): Promise<{ token: string; expiresAt: Date }> {
   return TokenService.generateAccessToken(payload);
 }
 
 export async function generateRefreshToken(
   payload: Omit<TokenPayload, "iss" | "exp" | "iat" | "totpVerified">
-): Promise<string> {
+): Promise<{ token: string; expiresAt: Date }> {
   return TokenService.generateRefreshToken(payload);
 }
 
